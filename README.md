@@ -30,9 +30,11 @@ TrustFlags required to allow items with custom names, empty to always allow
 `sm_ugc_trust_spray "tfdpslgob3"`   
 TrustFlags required to allow sprays, empty to always allow
 
+Items that do not pass the filters will currently just be removed from the player.   
+In case of weapons i might look into using TF2 Gimme or TF2 Items to generate and re-equip "clean" versions.
+
 ## Dependencies
 
 * This plugin requires [TF2 Attributes](https://github.com/nosoop/tf2attributes) to check if an items has a custom name/description/decal.   
   I'm using nosoops fork, but FlamingSarges original might work as well
-
 * [TrustFactor](https://github.com/DosMike/SM-TrustFactor) is required to check players trustworthiness.
