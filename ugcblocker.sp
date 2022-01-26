@@ -65,14 +65,14 @@ void HookAndLoad(ConVar cvar, ConVarChanged handler) {
 }
 
 public void OnPluginStart() {
-	cvar_disable_Spray = CreateConVar("sm_ugc_disable_spray", "0", "Always block players from using sprays", FCVAR_HIDDEN, true, 0.0, true, 1.0);
-	cvar_disable_Decal = CreateConVar("sm_ugc_disable_decal", "0", "Always block items with custom decals", FCVAR_HIDDEN, true, 0.0, true, 1.0);
-	cvar_disable_Name = CreateConVar("sm_ugc_disable_name", "0", "Always block items with custom names", FCVAR_HIDDEN, true, 0.0, true, 1.0);
-	cvar_disable_Description = CreateConVar("sm_ugc_disable_description", "0", "Always block items with custom descriptions", FCVAR_HIDDEN, true, 0.0, true, 1.0);
-	cvar_trust_Spray = CreateConVar("sm_ugc_trust_spray", "tfdpslgob3", "TrustFlags required to allow sprays, empty to always allow", FCVAR_HIDDEN);
-	cvar_trust_Decal = CreateConVar("sm_ugc_trust_decal", "tfdpslgob3", "TrustFlags required to allow items with custom decals, empty to always allow", FCVAR_HIDDEN);
-	cvar_trust_Name = CreateConVar("sm_ugc_trust_name", "tfdpslgob3", "TrustFlags required to allow items with custom names, empty to always allow", FCVAR_HIDDEN);
-	cvar_trust_Description = CreateConVar("sm_ugc_trust_description", "tfdpslgob3", "TrustFlags required to allow items with custom descriptions, empty to always allow", FCVAR_HIDDEN);
+	cvar_disable_Spray = CreateConVar("sm_ugc_disable_spray", "0", "Always block players from using sprays", FCVAR_HIDDEN|FCVAR_UNLOGGED|FCVAR_DONTRECORD, true, 0.0, true, 1.0);
+	cvar_disable_Decal = CreateConVar("sm_ugc_disable_decal", "0", "Always block items with custom decals", FCVAR_HIDDEN|FCVAR_UNLOGGED|FCVAR_DONTRECORD, true, 0.0, true, 1.0);
+	cvar_disable_Name = CreateConVar("sm_ugc_disable_name", "0", "Always block items with custom names", FCVAR_HIDDEN|FCVAR_UNLOGGED|FCVAR_DONTRECORD, true, 0.0, true, 1.0);
+	cvar_disable_Description = CreateConVar("sm_ugc_disable_description", "0", "Always block items with custom descriptions", FCVAR_HIDDEN|FCVAR_UNLOGGED|FCVAR_DONTRECORD, true, 0.0, true, 1.0);
+	cvar_trust_Spray = CreateConVar("sm_ugc_trust_spray", "tfdpslgob3", "TrustFlags required to allow sprays, empty to always allow", FCVAR_HIDDEN|FCVAR_UNLOGGED|FCVAR_DONTRECORD);
+	cvar_trust_Decal = CreateConVar("sm_ugc_trust_decal", "tfdpslgob3", "TrustFlags required to allow items with custom decals, empty to always allow", FCVAR_HIDDEN|FCVAR_UNLOGGED|FCVAR_DONTRECORD);
+	cvar_trust_Name = CreateConVar("sm_ugc_trust_name", "tfdpslgob3", "TrustFlags required to allow items with custom names, empty to always allow", FCVAR_HIDDEN|FCVAR_UNLOGGED|FCVAR_DONTRECORD);
+	cvar_trust_Description = CreateConVar("sm_ugc_trust_description", "tfdpslgob3", "TrustFlags required to allow items with custom descriptions, empty to always allow", FCVAR_HIDDEN|FCVAR_UNLOGGED|FCVAR_DONTRECORD);
 	HookAndLoad(cvar_disable_Spray, OnCvarChange_DisableSpray);
 	HookAndLoad(cvar_disable_Decal, OnCvarChange_DisableDecal);
 	HookAndLoad(cvar_disable_Name, OnCvarChange_DisableName);
@@ -219,8 +219,11 @@ void CheckClientItems(int client) {
 	for (int slot;slot<4;slot++) {
 		int weapon = TF2Util_GetPlayerLoadoutEntity(client, slot);
 		if (weapon != INVALID_ENT_REFERENCE) {
-			flags = UGCCheckItem(weapon);
-			if (flags & ~clientUGC[client]) {
+			flags = UGCCheckItem(weapon) & ~clientUGC[client];
+			if (flags == ugcDecal) {
+				RemoveItemDecal(weapon);
+				PrintToChat(client, "[SM] The decal was removed from your %s", slotName);
+			} else if (flags) {
 				TF2_RemoveWeaponSlot(client, slot);
 				TF2Econ_TranslateLoadoutSlotIndexToName(slot, slotName, sizeof(slotName));
 				UGCFlagString(flags & ~clientUGC[client], buffer, sizeof(buffer));
@@ -272,6 +275,13 @@ static eUserGeneratedContent UGCCheckItem(int entity) {
 //	if (itemDesc[0]) ugc |= ugcDescription;
 	
 	return ugc & checkUGCTypes;
+}
+
+static void RemoveItemDecal(int weapon) {
+	//we need to overwrite the value, as it's a SOC value. 'Removing' has no effect
+	TF2Attrib_SetByDefIndex(weapon, 152, 0.0);
+	TF2Attrib_SetByDefIndex(weapon, 227, 0.0);
+	TF2Attrib_ClearCache(weapon);
 }
 
 public Action OnTempEnt_PlayerDecal(const char[] name, const int[] clients, int count, float delay) {
