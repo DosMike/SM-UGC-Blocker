@@ -7,7 +7,7 @@
 
 #include <trustfactor>
 
-#define PLUGIN_VERSION "22w03a"
+#define PLUGIN_VERSION "22w04a"
 
 #pragma newdecls required
 #pragma semicolon 1
@@ -33,14 +33,10 @@ static ConVar cvar_trust_Spray;
 static ConVar cvar_trust_Decal;
 static ConVar cvar_trust_Name;
 static ConVar cvar_trust_Description;
-static TrustFactors trustFlags_Spray;
-static TrustFactors trustFlags_Decal;
-static TrustFactors trustFlags_Name;
-static TrustFactors trustFlags_Description;
-static int trustLevel_Spray;
-static int trustLevel_Decal;
-static int trustLevel_Name;
-static int trustLevel_Description;
+static TrustCondition trust_Spray;
+static TrustCondition trust_Decal;
+static TrustCondition trust_Name;
+static TrustCondition trust_Description;
 
 static bool bConVarUpdates;
 
@@ -65,14 +61,14 @@ void HookAndLoad(ConVar cvar, ConVarChanged handler) {
 }
 
 public void OnPluginStart() {
-	cvar_disable_Spray = CreateConVar("sm_ugc_disable_spray", "0", "Always block players from using sprays", FCVAR_HIDDEN|FCVAR_UNLOGGED|FCVAR_DONTRECORD, true, 0.0, true, 1.0);
-	cvar_disable_Decal = CreateConVar("sm_ugc_disable_decal", "0", "Always block items with custom decals", FCVAR_HIDDEN|FCVAR_UNLOGGED|FCVAR_DONTRECORD, true, 0.0, true, 1.0);
-	cvar_disable_Name = CreateConVar("sm_ugc_disable_name", "0", "Always block items with custom names", FCVAR_HIDDEN|FCVAR_UNLOGGED|FCVAR_DONTRECORD, true, 0.0, true, 1.0);
-	cvar_disable_Description = CreateConVar("sm_ugc_disable_description", "0", "Always block items with custom descriptions", FCVAR_HIDDEN|FCVAR_UNLOGGED|FCVAR_DONTRECORD, true, 0.0, true, 1.0);
-	cvar_trust_Spray = CreateConVar("sm_ugc_trust_spray", "tfdpslgob3", "TrustFlags required to allow sprays, empty to always allow", FCVAR_HIDDEN|FCVAR_UNLOGGED|FCVAR_DONTRECORD);
-	cvar_trust_Decal = CreateConVar("sm_ugc_trust_decal", "tfdpslgob3", "TrustFlags required to allow items with custom decals, empty to always allow", FCVAR_HIDDEN|FCVAR_UNLOGGED|FCVAR_DONTRECORD);
-	cvar_trust_Name = CreateConVar("sm_ugc_trust_name", "tfdpslgob3", "TrustFlags required to allow items with custom names, empty to always allow", FCVAR_HIDDEN|FCVAR_UNLOGGED|FCVAR_DONTRECORD);
-	cvar_trust_Description = CreateConVar("sm_ugc_trust_description", "tfdpslgob3", "TrustFlags required to allow items with custom descriptions, empty to always allow", FCVAR_HIDDEN|FCVAR_UNLOGGED|FCVAR_DONTRECORD);
+	cvar_disable_Spray = CreateConVar("sm_ugc_disable_spray", "0", "Always block players from using sprays", FCVAR_HIDDEN|FCVAR_UNLOGGED, true, 0.0, true, 1.0);
+	cvar_disable_Decal = CreateConVar("sm_ugc_disable_decal", "0", "Always block items with custom decals", FCVAR_HIDDEN|FCVAR_UNLOGGED, true, 0.0, true, 1.0);
+	cvar_disable_Name = CreateConVar("sm_ugc_disable_name", "0", "Always block items with custom names", FCVAR_HIDDEN|FCVAR_UNLOGGED, true, 0.0, true, 1.0);
+	cvar_disable_Description = CreateConVar("sm_ugc_disable_description", "0", "Always block items with custom descriptions", FCVAR_HIDDEN|FCVAR_UNLOGGED, true, 0.0, true, 1.0);
+	cvar_trust_Spray = CreateConVar("sm_ugc_trust_spray", "tfdpslgob3", "TrustFlags required to allow sprays, empty to always allow", FCVAR_HIDDEN|FCVAR_UNLOGGED);
+	cvar_trust_Decal = CreateConVar("sm_ugc_trust_decal", "tfdpslgob3", "TrustFlags required to allow items with custom decals, empty to always allow", FCVAR_HIDDEN|FCVAR_UNLOGGED);
+	cvar_trust_Name = CreateConVar("sm_ugc_trust_name", "tfdpslgob3", "TrustFlags required to allow items with custom names, empty to always allow", FCVAR_HIDDEN|FCVAR_UNLOGGED);
+	cvar_trust_Description = CreateConVar("sm_ugc_trust_description", "tfdpslgob3", "TrustFlags required to allow items with custom descriptions, empty to always allow", FCVAR_HIDDEN|FCVAR_UNLOGGED);
 	HookAndLoad(cvar_disable_Spray, OnCvarChange_DisableSpray);
 	HookAndLoad(cvar_disable_Decal, OnCvarChange_DisableDecal);
 	HookAndLoad(cvar_disable_Name, OnCvarChange_DisableName);
@@ -112,10 +108,10 @@ public void OnCvarChange_TrustSpray(ConVar convar, const char[] oldValue, const 
 	TrimString(val);
 	if (val[0]==0) {
 		checkUGCTypes &=~ ugcSpray;
-		trustLevel_Spray = 0;
+		trust_Spray.Always();
 	} else {
 		checkUGCTypes |= ugcSpray;
-		trustFlags_Spray = ReadTrustFactorString(val, _, trustLevel_Spray);
+		trust_Spray.Parse(val);
 	}
 	if (bConVarUpdates) UpdateAllowedUGCAll();
 }
@@ -125,10 +121,10 @@ public void OnCvarChange_TrustDecal(ConVar convar, const char[] oldValue, const 
 	TrimString(val);
 	if (val[0]==0) {
 		checkUGCTypes &=~ ugcDecal;
-		trustLevel_Decal = 0;
+		trust_Decal.Always();
 	} else {
 		checkUGCTypes |= ugcDecal;
-		trustFlags_Decal = ReadTrustFactorString(val, _, trustLevel_Decal);
+		trust_Decal.Parse(val);
 	}
 	if (bConVarUpdates) UpdateAllowedUGCAll();
 }
@@ -138,10 +134,10 @@ public void OnCvarChange_TrustName(ConVar convar, const char[] oldValue, const c
 	TrimString(val);
 	if (val[0]==0) {
 		checkUGCTypes &=~ ugcName;
-		trustLevel_Name = 0;
+		trust_Name.Always();
 	} else {
 		checkUGCTypes |= ugcName;
-		trustFlags_Name = ReadTrustFactorString(val, _, trustLevel_Name);
+		trust_Name.Parse(val);
 	}
 	if (bConVarUpdates) UpdateAllowedUGCAll();
 }
@@ -151,10 +147,10 @@ public void OnCvarChange_TrustDescription(ConVar convar, const char[] oldValue, 
 	TrimString(val);
 	if (val[0]==0) {
 		checkUGCTypes &=~ ugcDescription;
-		trustLevel_Description = 0;
+		trust_Description.Always();
 	} else {
 		checkUGCTypes |= ugcDescription;
-		trustFlags_Description = ReadTrustFactorString(val, _, trustLevel_Description);
+		trust_Description.Parse(val);
 	}
 	if (bConVarUpdates) UpdateAllowedUGCAll();
 }
@@ -184,10 +180,10 @@ static void UpdateAllowedUGCAll() {
 }
 static void UpdateAllowedUGC(int client) {
 	eUserGeneratedContent flags = ugcNone, previously = clientUGC[client];
-	if (CheckClientTrust(client, trustFlags_Spray, trustLevel_Spray)) flags |= ugcSpray;
-	if (CheckClientTrust(client, trustFlags_Decal, trustLevel_Decal)) flags |= ugcDecal;
-	if (CheckClientTrust(client, trustFlags_Name, trustLevel_Name)) flags |= ugcName;
-	if (CheckClientTrust(client, trustFlags_Description, trustLevel_Description)) flags |= ugcDescription;
+	if (trust_Spray.Test(client)) flags |= ugcSpray;
+	if (trust_Decal.Test(client)) flags |= ugcDecal;
+	if (trust_Name.Test(client)) flags |= ugcName;
+	if (trust_Description.Test(client)) flags |= ugcDescription;
 	flags &=~ blockUGCTypes;
 	clientUGC[client]=flags;
 	
