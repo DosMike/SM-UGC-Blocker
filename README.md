@@ -18,16 +18,16 @@ Always block items with custom names
 `sm_ugc_disable_spray "0"`   
 Always block players from using sprays
 
-`sm_ugc_trust_decal "tfdpslgob3"`   
+`sm_ugc_trust_decal "*3"`   
 TrustFlags required to allow items with custom decals, empty to always allow
 
-`sm_ugc_trust_description "tfdpslgob3"`   
+`sm_ugc_trust_description "*3"`   
 TrustFlags required to allow items with custom descriptions, empty to always allow
 
-`sm_ugc_trust_name "tfdpslgob3"`   
+`sm_ugc_trust_name "*3"`   
 TrustFlags required to allow items with custom names, empty to always allow
 
-`sm_ugc_trust_spray "tfdpslgob3"`   
+`sm_ugc_trust_spray "*3"`   
 TrustFlags required to allow sprays, empty to always allow
 
 Items that do not pass the filters will currently just be removed from the player.   
