@@ -18,6 +18,9 @@ Always block items with custom names
 `sm_ugc_disable_spray "0"`   
 Always block players from using sprays
 
+`sm_ugc_disable_jingle "0"`   
+Always block players from using jingles ('sound sprays')
+
 `sm_ugc_trust_decal "*3"`   
 TrustFlags required to allow items with custom decals, empty to always allow
 
@@ -30,8 +33,21 @@ TrustFlags required to allow items with custom names, empty to always allow
 `sm_ugc_trust_spray "*3"`   
 TrustFlags required to allow sprays, empty to always allow
 
+`sm_ugc_trust_jingle "*3"`   
+TrustFlags required to allow jingles, empty to always allow
+
+`sm_ugc_log_uploads "1"`   
+Log all client file uploads to `user_custom_received.log`
+
 Items that do not pass the filters will currently just be removed from the player.   
 In case of weapons i might look into using TF2 Gimme or TF2 Items to generate and re-equip "clean" versions.
+
+User custom files will still upload to the server, but the download is limited:   
+If a client connects while a spray or jingle is blocked, that file should no longer download to other clients.
+In case sprays or jingles get blocked after they join, no new clients will receive the files, and the action should
+be blocked from being executed.
+Getting permission to use sprays or jingles after being in the server for some seconds will *not* send the files
+to other clients. The player should reconnect in this case to trigger the download.
 
 ## Dependencies
 

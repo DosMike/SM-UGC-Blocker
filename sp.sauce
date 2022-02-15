@@ -1,0 +1,10 @@
+sourcemod 1.10
+auth github ${spsgitpat}
+
+dependency github nosoop/SM-TFEconData latest
+dependency github nosoop/SM-TFUtils latest
+dependency github nosoop/tf2attributes master-SNAPSHOT
+
+dependency github DosMike/SM-TrustFactor latest
+
+spcomp ugcblocker.sp -O2 -ougcblocker.smx

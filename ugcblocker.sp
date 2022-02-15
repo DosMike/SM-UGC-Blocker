@@ -7,7 +7,7 @@
 
 #include <trustfactor>
 
-#define PLUGIN_VERSION "22w04a"
+#define PLUGIN_VERSION "22w07a"
 
 #pragma newdecls required
 #pragma semicolon 1
@@ -15,30 +15,39 @@
 enum eUserGeneratedContent (<<=1) {
 	ugcNone=0,
 	ugcSpray=1,
+	ugcJingle, //this is an audatory version of sprays: wav @44.1kHz, max 512KiB
 	ugcDecal,
 	ugcName,
-	ugcDescription
+	ugcDescription,
 }
 
 static bool clientUGCloaded[MAXPLAYERS+1]; //did we load ugc flags?
 static eUserGeneratedContent clientUGC[MAXPLAYERS+1]; //green-light flags for trusted 
 static eUserGeneratedContent checkUGCTypes; //we only care to check those
+static char clientSprayFile[MAXPLAYERS+1][128];
+static char clientJingleFile[MAXPLAYERS+1][128];
+
 static ConVar cvar_disable_Spray;
+static ConVar cvar_disable_Jingle;
 static ConVar cvar_disable_Decal;
 static ConVar cvar_disable_Name;
 static ConVar cvar_disable_Description;
 static eUserGeneratedContent blockUGCTypes; //these are always blocked
 
 static ConVar cvar_trust_Spray;
+static ConVar cvar_trust_Jingle;
 static ConVar cvar_trust_Decal;
 static ConVar cvar_trust_Name;
 static ConVar cvar_trust_Description;
 static TrustCondition trust_Spray;
+static TrustCondition trust_Jingle;
 static TrustCondition trust_Decal;
 static TrustCondition trust_Name;
 static TrustCondition trust_Description;
+static bool bConVarUpdates; //allow user flag updates from convar changes, disabled in plugin start
 
-static bool bConVarUpdates;
+static ConVar cvar_logUploads;
+static bool bLogUserCustomUploads;
 
 public Plugin myinfo = {
 	name = "[TF2] UGC Blocker",
@@ -62,21 +71,27 @@ void HookAndLoad(ConVar cvar, ConVarChanged handler) {
 
 public void OnPluginStart() {
 	cvar_disable_Spray = CreateConVar("sm_ugc_disable_spray", "0", "Always block players from using sprays", FCVAR_HIDDEN|FCVAR_UNLOGGED, true, 0.0, true, 1.0);
+	cvar_disable_Jingle = CreateConVar("sm_ugc_disable_jingle", "0", "Always block players from using jingles ('sound sprays')", FCVAR_HIDDEN|FCVAR_UNLOGGED, true, 0.0, true, 1.0);
 	cvar_disable_Decal = CreateConVar("sm_ugc_disable_decal", "0", "Always block items with custom decals", FCVAR_HIDDEN|FCVAR_UNLOGGED, true, 0.0, true, 1.0);
 	cvar_disable_Name = CreateConVar("sm_ugc_disable_name", "0", "Always block items with custom names", FCVAR_HIDDEN|FCVAR_UNLOGGED, true, 0.0, true, 1.0);
 	cvar_disable_Description = CreateConVar("sm_ugc_disable_description", "0", "Always block items with custom descriptions", FCVAR_HIDDEN|FCVAR_UNLOGGED, true, 0.0, true, 1.0);
 	cvar_trust_Spray = CreateConVar("sm_ugc_trust_spray", "*3", "TrustFlags required to allow sprays, empty to always allow", FCVAR_HIDDEN|FCVAR_UNLOGGED);
+	cvar_trust_Jingle = CreateConVar("sm_ugc_trust_jingle", "*3", "TrustFlags required to allow jingles, empty to always allow", FCVAR_HIDDEN|FCVAR_UNLOGGED);
 	cvar_trust_Decal = CreateConVar("sm_ugc_trust_decal", "*3", "TrustFlags required to allow items with custom decals, empty to always allow", FCVAR_HIDDEN|FCVAR_UNLOGGED);
 	cvar_trust_Name = CreateConVar("sm_ugc_trust_name", "*3", "TrustFlags required to allow items with custom names, empty to always allow", FCVAR_HIDDEN|FCVAR_UNLOGGED);
 	cvar_trust_Description = CreateConVar("sm_ugc_trust_description", "*3", "TrustFlags required to allow items with custom descriptions, empty to always allow", FCVAR_HIDDEN|FCVAR_UNLOGGED);
+	cvar_logUploads = CreateConVar("sm_ugc_log_uploads", "1", "Log all client file uploads to user_custom_received.log", FCVAR_HIDDEN|FCVAR_UNLOGGED, true, 0.0, true, 1.0);
 	HookAndLoad(cvar_disable_Spray, OnCvarChange_DisableSpray);
+	HookAndLoad(cvar_disable_Jingle, OnCvarChange_DisableJingle);
 	HookAndLoad(cvar_disable_Decal, OnCvarChange_DisableDecal);
 	HookAndLoad(cvar_disable_Name, OnCvarChange_DisableName);
 	HookAndLoad(cvar_disable_Description, OnCvarChange_DisableDescription);
 	HookAndLoad(cvar_trust_Spray, OnCvarChange_TrustSpray);
+	HookAndLoad(cvar_trust_Jingle, OnCvarChange_TrustJingle);
 	HookAndLoad(cvar_trust_Decal, OnCvarChange_TrustDecal);
 	HookAndLoad(cvar_trust_Name, OnCvarChange_TrustName);
 	HookAndLoad(cvar_trust_Description, OnCvarChange_TrustDescription);
+	HookAndLoad(cvar_logUploads, OnCvarChange_LogUploads);
 	AutoExecConfig();
 	bConVarUpdates=true;
 	
@@ -88,6 +103,10 @@ public void OnPluginStart() {
 
 public void OnCvarChange_DisableSpray(ConVar convar, const char[] oldValue, const char[] newValue) {
 	if (convar.BoolValue) blockUGCTypes |= ugcSpray; else blockUGCTypes &=~ ugcSpray;
+	if (bConVarUpdates) UpdateAllowedUGCAll();
+}
+public void OnCvarChange_DisableJingle(ConVar convar, const char[] oldValue, const char[] newValue) {
+	if (convar.BoolValue) blockUGCTypes |= ugcJingle; else blockUGCTypes &=~ ugcJingle;
 	if (bConVarUpdates) UpdateAllowedUGCAll();
 }
 public void OnCvarChange_DisableDecal(ConVar convar, const char[] oldValue, const char[] newValue) {
@@ -111,6 +130,19 @@ public void OnCvarChange_TrustSpray(ConVar convar, const char[] oldValue, const 
 		trust_Spray.Always();
 	} else {
 		checkUGCTypes |= ugcSpray;
+		trust_Spray.Parse(val);
+	}
+	if (bConVarUpdates) UpdateAllowedUGCAll();
+}
+public void OnCvarChange_TrustJingle(ConVar convar, const char[] oldValue, const char[] newValue) {
+	char val[32];
+	strcopy(val,sizeof(val),newValue);
+	TrimString(val);
+	if (val[0]==0) {
+		checkUGCTypes &=~ ugcJingle;
+		trust_Spray.Always();
+	} else {
+		checkUGCTypes |= ugcJingle;
 		trust_Spray.Parse(val);
 	}
 	if (bConVarUpdates) UpdateAllowedUGCAll();
@@ -154,12 +186,58 @@ public void OnCvarChange_TrustDescription(ConVar convar, const char[] oldValue, 
 	}
 	if (bConVarUpdates) UpdateAllowedUGCAll();
 }
+public void OnCvarChange_LogUploads(ConVar convar, const char[] oldValue, const char[] newValue) {
+	bLogUserCustomUploads = convar.BoolValue;
+}
 
+// ===== Ok, boilerplate is over =====
+
+public void OnMapStart() {
+	if (bLogUserCustomUploads) {
+		char mapName[128];
+		GetCurrentMap(mapName, sizeof(mapName));
+		LogToFileEx("user_custom_received.log", "----- Map Changed To %s -----", mapName);
+	}
+}
+public Action OnFileReceive(int client, const char[] file) {
+	if (bLogUserCustomUploads) {
+		LogToFileEx("user_custom_received.log", "Received %s from %L", file, client);
+	}
+	return Plugin_Continue;
+}
+public Action OnFileSend(int client, const char[] file) {
+	eUserGeneratedContent type;
+	int owner = GetOwnerOfUserFile(file, type);
+	if (owner < 0) {
+		PrintToServer("Blocking sending UGC: '%s', unknown owner", file);
+		return Plugin_Handled;
+	} else if (client > 0 && (checkUGCTypes&type) && !(clientUGC[client]&type)) {
+		PrintToServer("Blocking sending UGC: '%s', type not allowed from %L", file, owner);
+		return Plugin_Handled;
+	}
+	PrintToServer("Sending %s to %N", file, client);
+	return Plugin_Continue;
+}
 
 public void OnClientConnected(int client) {
 	clientUGCloaded[client] = false;
-	clientUGC[client]=ugcNone;
+	clientUGC[client] = ugcNone;
+	clientSprayFile[client][0]=0;
+	clientJingleFile[client][0]=0;
 }
+public void OnClientPutInServer(int client) {
+	char buffer[32];
+	if (GetPlayerDecalFile(client, buffer, sizeof(buffer)))
+		Format(clientSprayFile[client], sizeof(clientSprayFile[]), "user_custom/%c%c/%s.dat", buffer[0], buffer[1], buffer);
+	else PrintToServer("Client %L has no decal file", client);
+	if (GetPlayerJingleFile(client, buffer, sizeof(buffer)))
+		Format(clientSprayFile[client], sizeof(clientSprayFile[]), "user_custom/%c%c/%s.dat", buffer[0], buffer[1], buffer);
+	else PrintToServer("Client %L has no jingle file", client);	
+}
+public void OnClientDisconnect_Post(int client) {
+	OnClientConnected(client); //cleanup is the same
+}
+
 
 public void OnClientTrustFactorLoaded(int client, TrustFactors factors) {
 	if (IsClientInGame(client) && TF2_GetClientTeam(client) > TFTeam_Spectator && !clientUGCloaded[client]) {
@@ -181,6 +259,7 @@ static void UpdateAllowedUGCAll() {
 static void UpdateAllowedUGC(int client) {
 	eUserGeneratedContent flags = ugcNone, previously = clientUGC[client];
 	if (trust_Spray.Test(client)) flags |= ugcSpray;
+	if (trust_Jingle.Test(client)) flags |= ugcJingle;
 	if (trust_Decal.Test(client)) flags |= ugcDecal;
 	if (trust_Name.Test(client)) flags |= ugcName;
 	if (trust_Description.Test(client)) flags |= ugcDescription;
@@ -192,7 +271,7 @@ static void UpdateAllowedUGC(int client) {
 		KillSpray(client);
 	
 	if (flags != previously) {
-		char buffer[64];
+		char buffer[72];
 		UGCFlagString(flags, buffer, sizeof(buffer));
 		PrintToChat(client, "[SM] You are allowed to use %s", buffer);
 	}
@@ -200,6 +279,7 @@ static void UpdateAllowedUGC(int client) {
 
 public void OnEvent_ClientInventoryRegeneratePost(Event event, const char[] name, bool dontBroadcast) {
 	int client = GetClientOfUserId(event.GetInt("userid", 0));
+	if (!IsClientInGame(client) || !IsPlayerAlive(client) || TF2_GetClientTeam(client)<=TFTeam_Spectator) return;
 	if (!clientUGCloaded[client]) {
 		clientUGCloaded[client]=true;
 		UpdateAllowedUGC(client);
@@ -294,6 +374,31 @@ public Action OnTempEnt_PlayerDecal(const char[] name, const int[] clients, int 
 	return Plugin_Handled;
 }
 
+public Action OnPlayerRunCmd(int client, int &buttons, int &impulse, float vel[3], float angles[3], int &weapon, int &subtype, int &cmdnum, int &tickcount, int &seed, int mouse[2]) {
+	if (impulse == 202) {
+		if ((checkUGCTypes&ugcJingle) && !clientUGC[client]&ugcJingle) impulse = 0;
+	}
+	return Plugin_Continue;
+}
+
+
+static int GetOwnerOfUserFile(const char[] file, eUserGeneratedContent& type) {
+	if (StrContains(file,"user_custom/")==0) {
+		for (int client=1;client<=MaxClients;client++) {
+			if (!IsClientConnected(client)) continue;
+			if (StrEqual(clientSprayFile[client], file)) {
+				type = ugcSpray;
+				return client;
+			} else if (StrEqual(clientSprayFile[client], file)) {
+				type = ugcJingle;
+				return client;
+			}
+		}
+		return -1; //unknown owner
+	}
+	return 0; //server owned
+}
+
 static bool IsValidClient(int client) {
 	return 1<=client<=MaxClients && IsClientInGame(client) && !IsFakeClient(client) && !IsClientSourceTV(client) && !IsClientReplay(client);
 }
@@ -336,6 +441,10 @@ static void UGCFlagString(eUserGeneratedContent flags, char[] string, int maxlen
 	if (flags&ugcSpray) {
 		if (string[0]!=0) StrCat(string, maxlen, ", ");
 		StrCat(string, maxlen, "Sprays");
+	}
+	if (flags&ugcJingle) {
+		if (string[0]!=0) StrCat(string, maxlen, ", ");
+		StrCat(string, maxlen, "Jingles");
 	}
 }
 
