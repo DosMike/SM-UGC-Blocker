@@ -209,13 +209,13 @@ public Action OnFileSend(int client, const char[] file) {
 	eUserGeneratedContent type;
 	int owner = GetOwnerOfUserFile(file, type);
 	if (owner < 0) {
-		PrintToServer("Blocking sending UGC: '%s', unknown owner", file);
+//		PrintToServer("Blocking sending UGC: '%s' to %N, unknown owner", file, client);
 		return Plugin_Handled;
-	} else if (client > 0 && (checkUGCTypes&type) && !(clientUGC[client]&type)) {
-		PrintToServer("Blocking sending UGC: '%s', type not allowed from %L", file, owner);
+	} else if (owner > 0 && (checkUGCTypes&type) && !(clientUGC[owner]&type)) {
+//		PrintToServer("Blocking sending UGC: '%s' to %N, type not allowed from %L", file, client, owner);
 		return Plugin_Handled;
 	}
-	PrintToServer("Sending %s to %N", file, client);
+//	PrintToServer("Sending %s to %N", file, client);
 	return Plugin_Continue;
 }
 
@@ -227,12 +227,14 @@ public void OnClientConnected(int client) {
 }
 public void OnClientPutInServer(int client) {
 	char buffer[32];
-	if (GetPlayerDecalFile(client, buffer, sizeof(buffer)))
+	if (GetPlayerDecalFile(client, buffer, sizeof(buffer))) {
 		Format(clientSprayFile[client], sizeof(clientSprayFile[]), "user_custom/%c%c/%s.dat", buffer[0], buffer[1], buffer);
-	else PrintToServer("Client %L has no decal file", client);
-	if (GetPlayerJingleFile(client, buffer, sizeof(buffer)))
-		Format(clientSprayFile[client], sizeof(clientSprayFile[]), "user_custom/%c%c/%s.dat", buffer[0], buffer[1], buffer);
-	else PrintToServer("Client %L has no jingle file", client);	
+//		PrintToServer("Assigned decal file %s to %N", clientSprayFile[client], client);
+	}// else PrintToServer("Client %L has no decal file", client);
+	if (GetPlayerJingleFile(client, buffer, sizeof(buffer))) {
+		Format(clientJingleFile[client], sizeof(clientJingleFile[]), "user_custom/%c%c/%s.dat", buffer[0], buffer[1], buffer);
+//		PrintToServer("Assigned jingle file %s to %N", clientJingleFile[client], client);
+	}// else PrintToServer("Client %L has no jingle file", client);	
 }
 public void OnClientDisconnect_Post(int client) {
 	OnClientConnected(client); //cleanup is the same
@@ -374,13 +376,6 @@ public Action OnTempEnt_PlayerDecal(const char[] name, const int[] clients, int 
 	return Plugin_Handled;
 }
 
-public Action OnPlayerRunCmd(int client, int &buttons, int &impulse, float vel[3], float angles[3], int &weapon, int &subtype, int &cmdnum, int &tickcount, int &seed, int mouse[2]) {
-	if (impulse == 202) {
-		if ((checkUGCTypes&ugcJingle) && !clientUGC[client]&ugcJingle) impulse = 0;
-	}
-	return Plugin_Continue;
-}
-
 
 static int GetOwnerOfUserFile(const char[] file, eUserGeneratedContent& type) {
 	if (StrContains(file,"user_custom/")==0) {
@@ -389,12 +384,12 @@ static int GetOwnerOfUserFile(const char[] file, eUserGeneratedContent& type) {
 			if (StrEqual(clientSprayFile[client], file)) {
 				type = ugcSpray;
 				return client;
-			} else if (StrEqual(clientSprayFile[client], file)) {
+			} else if (StrEqual(clientJingleFile[client], file)) {
 				type = ugcJingle;
 				return client;
 			}
 		}
-		return -1; //unknown owner
+		return -1; //unknown owner; this magically also hits for the default "no-jingle" file. idk why but ok i guess
 	}
 	return 0; //server owned
 }
