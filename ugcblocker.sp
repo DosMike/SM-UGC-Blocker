@@ -1,13 +1,15 @@
 #include <sourcemod>
-#include <tf2_stocks>
 
+#include <tf2_stocks>
+#undef REQUIRE_PLUGIN
 #include <tf_econ_data>
 #include <tf2utils>
 #include <tf2attributes>
+#define REQUIRE_PLUGIN
 
 #include <trustfactor>
 
-#define PLUGIN_VERSION "22w07a"
+#define PLUGIN_VERSION "22w07b"
 
 #pragma newdecls required
 #pragma semicolon 1
@@ -70,33 +72,51 @@ void HookAndLoad(ConVar cvar, ConVarChanged handler) {
 }
 
 public void OnPluginStart() {
+	
 	cvar_disable_Spray = CreateConVar("sm_ugc_disable_spray", "0", "Always block players from using sprays", FCVAR_HIDDEN|FCVAR_UNLOGGED, true, 0.0, true, 1.0);
-	cvar_disable_Jingle = CreateConVar("sm_ugc_disable_jingle", "0", "Always block players from using jingles ('sound sprays')", FCVAR_HIDDEN|FCVAR_UNLOGGED, true, 0.0, true, 1.0);
-	cvar_disable_Decal = CreateConVar("sm_ugc_disable_decal", "0", "Always block items with custom decals", FCVAR_HIDDEN|FCVAR_UNLOGGED, true, 0.0, true, 1.0);
-	cvar_disable_Name = CreateConVar("sm_ugc_disable_name", "0", "Always block items with custom names", FCVAR_HIDDEN|FCVAR_UNLOGGED, true, 0.0, true, 1.0);
-	cvar_disable_Description = CreateConVar("sm_ugc_disable_description", "0", "Always block items with custom descriptions", FCVAR_HIDDEN|FCVAR_UNLOGGED, true, 0.0, true, 1.0);
-	cvar_trust_Spray = CreateConVar("sm_ugc_trust_spray", "*3", "TrustFlags required to allow sprays, empty to always allow", FCVAR_HIDDEN|FCVAR_UNLOGGED);
-	cvar_trust_Jingle = CreateConVar("sm_ugc_trust_jingle", "*3", "TrustFlags required to allow jingles, empty to always allow", FCVAR_HIDDEN|FCVAR_UNLOGGED);
-	cvar_trust_Decal = CreateConVar("sm_ugc_trust_decal", "*3", "TrustFlags required to allow items with custom decals, empty to always allow", FCVAR_HIDDEN|FCVAR_UNLOGGED);
-	cvar_trust_Name = CreateConVar("sm_ugc_trust_name", "*3", "TrustFlags required to allow items with custom names, empty to always allow", FCVAR_HIDDEN|FCVAR_UNLOGGED);
-	cvar_trust_Description = CreateConVar("sm_ugc_trust_description", "*3", "TrustFlags required to allow items with custom descriptions, empty to always allow", FCVAR_HIDDEN|FCVAR_UNLOGGED);
-	cvar_logUploads = CreateConVar("sm_ugc_log_uploads", "1", "Log all client file uploads to user_custom_received.log", FCVAR_HIDDEN|FCVAR_UNLOGGED, true, 0.0, true, 1.0);
 	HookAndLoad(cvar_disable_Spray, OnCvarChange_DisableSpray);
+	
+	cvar_disable_Jingle = CreateConVar("sm_ugc_disable_jingle", "0", "Always block players from using jingles ('sound sprays')", FCVAR_HIDDEN|FCVAR_UNLOGGED, true, 0.0, true, 1.0);
 	HookAndLoad(cvar_disable_Jingle, OnCvarChange_DisableJingle);
-	HookAndLoad(cvar_disable_Decal, OnCvarChange_DisableDecal);
-	HookAndLoad(cvar_disable_Name, OnCvarChange_DisableName);
-	HookAndLoad(cvar_disable_Description, OnCvarChange_DisableDescription);
+	
+	if (GetEngineVersion() == Engine_TF2) {
+		cvar_disable_Decal = CreateConVar("sm_ugc_disable_decal", "0", "Always block items with custom decals", FCVAR_HIDDEN|FCVAR_UNLOGGED, true, 0.0, true, 1.0);
+		HookAndLoad(cvar_disable_Decal, OnCvarChange_DisableDecal);
+		
+		cvar_disable_Name = CreateConVar("sm_ugc_disable_name", "0", "Always block items with custom names", FCVAR_HIDDEN|FCVAR_UNLOGGED, true, 0.0, true, 1.0);
+		HookAndLoad(cvar_disable_Name, OnCvarChange_DisableName);
+		
+		cvar_disable_Description = CreateConVar("sm_ugc_disable_description", "0", "Always block items with custom descriptions", FCVAR_HIDDEN|FCVAR_UNLOGGED, true, 0.0, true, 1.0);
+		HookAndLoad(cvar_disable_Description, OnCvarChange_DisableDescription);
+	}
+	
+	cvar_trust_Spray = CreateConVar("sm_ugc_trust_spray", "*3", "TrustFlags required to allow sprays, empty to always allow", FCVAR_HIDDEN|FCVAR_UNLOGGED);
 	HookAndLoad(cvar_trust_Spray, OnCvarChange_TrustSpray);
+	
+	cvar_trust_Jingle = CreateConVar("sm_ugc_trust_jingle", "*3", "TrustFlags required to allow jingles, empty to always allow", FCVAR_HIDDEN|FCVAR_UNLOGGED);
 	HookAndLoad(cvar_trust_Jingle, OnCvarChange_TrustJingle);
-	HookAndLoad(cvar_trust_Decal, OnCvarChange_TrustDecal);
-	HookAndLoad(cvar_trust_Name, OnCvarChange_TrustName);
-	HookAndLoad(cvar_trust_Description, OnCvarChange_TrustDescription);
+	
+	if (GetEngineVersion() == Engine_TF2) {
+		cvar_trust_Decal = CreateConVar("sm_ugc_trust_decal", "*3", "TrustFlags required to allow items with custom decals, empty to always allow", FCVAR_HIDDEN|FCVAR_UNLOGGED);
+		HookAndLoad(cvar_trust_Decal, OnCvarChange_TrustDecal);
+		
+		cvar_trust_Name = CreateConVar("sm_ugc_trust_name", "*3", "TrustFlags required to allow items with custom names, empty to always allow", FCVAR_HIDDEN|FCVAR_UNLOGGED);
+		HookAndLoad(cvar_trust_Name, OnCvarChange_TrustName);
+		
+		cvar_trust_Description = CreateConVar("sm_ugc_trust_description", "*3", "TrustFlags required to allow items with custom descriptions, empty to always allow", FCVAR_HIDDEN|FCVAR_UNLOGGED);
+		HookAndLoad(cvar_trust_Description, OnCvarChange_TrustDescription);
+	}
+	
+	cvar_logUploads = CreateConVar("sm_ugc_log_uploads", "1", "Log all client file uploads to user_custom_received.log", FCVAR_HIDDEN|FCVAR_UNLOGGED, true, 0.0, true, 1.0);
 	HookAndLoad(cvar_logUploads, OnCvarChange_LogUploads);
+	
 	AutoExecConfig();
 	bConVarUpdates=true;
 	
 	AddTempEntHook("Player Decal", OnTempEnt_PlayerDecal);
-	HookEvent("post_inventory_application", OnEvent_ClientInventoryRegeneratePost, EventHookMode_Pre);
+	if (GetEngineVersion() == Engine_TF2) {
+		HookEvent("post_inventory_application", OnEvent_ClientInventoryRegeneratePost, EventHookMode_Pre);
+	}
 	
 	UpdateAllowedUGCAll();
 }
@@ -262,9 +282,11 @@ static void UpdateAllowedUGC(int client) {
 	eUserGeneratedContent flags = ugcNone, previously = clientUGC[client];
 	if (trust_Spray.Test(client)) flags |= ugcSpray;
 	if (trust_Jingle.Test(client)) flags |= ugcJingle;
-	if (trust_Decal.Test(client)) flags |= ugcDecal;
-	if (trust_Name.Test(client)) flags |= ugcName;
-	if (trust_Description.Test(client)) flags |= ugcDescription;
+	if (GetEngineVersion() == Engine_TF2) {
+		if (trust_Decal.Test(client)) flags |= ugcDecal;
+		if (trust_Name.Test(client)) flags |= ugcName;
+		if (trust_Description.Test(client)) flags |= ugcDescription;
+	}
 	flags &=~ blockUGCTypes;
 	clientUGC[client]=flags;
 	
@@ -290,6 +312,7 @@ public void OnEvent_ClientInventoryRegeneratePost(Event event, const char[] name
 }
 
 void CheckClientItems(int client) {
+	if (GetEngineVersion() != Engine_TF2) return;
 	eUserGeneratedContent flags;
 	char buffer[256];
 	char slotName[24];
@@ -375,6 +398,15 @@ public Action OnTempEnt_PlayerDecal(const char[] name, const int[] clients, int 
 	PrintToChat(client, "[SM] Your spray was blocked");
 	return Plugin_Handled;
 }
+public Action OnPlayerRunCmd(int client, int &buttons, int &impulse, float vel[3], float angles[3], int &weapon, int &subtype, int &cmdnum, int &tickcount, int &seed, int mouse[2]) {
+	if (impulse == 202 && (checkUGCTypes&ugcJingle) && !(clientUGC[client]&ugcJingle)) {
+		impulse = 0;
+		PrintToChat(client, "[SM] Your jingle was blocked");
+		return Plugin_Changed;
+	}
+	return Plugin_Continue;
+}
+
 
 
 static int GetOwnerOfUserFile(const char[] file, eUserGeneratedContent& type) {
