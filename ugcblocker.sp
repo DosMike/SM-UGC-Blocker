@@ -1,4 +1,5 @@
 #include <sourcemod>
+#include <sdkhooks>
 
 #include <tf2_stocks>
 #undef REQUIRE_PLUGIN
@@ -9,7 +10,7 @@
 
 #include <trustfactor>
 
-#define PLUGIN_VERSION "22w07b"
+#define PLUGIN_VERSION "22w08a"
 
 #pragma newdecls required
 #pragma semicolon 1
@@ -52,9 +53,9 @@ static ConVar cvar_logUploads;
 static bool bLogUserCustomUploads;
 
 public Plugin myinfo = {
-	name = "[TF2] UGC Blocker",
+	name = "UGC Blocker",
 	author = "reBane",
-	description = "Block User Generated Content (Sprays Decal Names Descritions)",
+	description = "Block User Generated Content (Sprays Jingles and Items)",
 	version = PLUGIN_VERSION,
 	url = "N/A"
 }
@@ -116,7 +117,7 @@ public void OnPluginStart() {
 	AddTempEntHook("Player Decal", OnTempEnt_PlayerDecal);
 	if (GetEngineVersion() == Engine_TF2) {
 		HookEvent("post_inventory_application", OnEvent_ClientInventoryRegeneratePost, EventHookMode_Pre);
-	}
+	} //for other games we use the spawn post sdkhook
 	
 	UpdateAllowedUGCAll();
 }
@@ -303,12 +304,23 @@ static void UpdateAllowedUGC(int client) {
 
 public void OnEvent_ClientInventoryRegeneratePost(Event event, const char[] name, bool dontBroadcast) {
 	int client = GetClientOfUserId(event.GetInt("userid", 0));
-	if (!IsClientInGame(client) || !IsPlayerAlive(client) || TF2_GetClientTeam(client)<=TFTeam_Spectator) return;
+	if (!IsClientInGame(client) || !IsPlayerAlive(client) || TF2_GetClientTeam(client)<=TFTeam_Spectator || IsFakeClient(client)) return;
 	if (!clientUGCloaded[client]) {
 		clientUGCloaded[client]=true;
 		UpdateAllowedUGC(client);
 	}
 	CheckClientItems(client);
+}
+public void OnEntityCreated(int entity, const char[] classname){
+	if (GetEngineVersion() != Engine_TF2 && StrEqual(classname, "player"))
+		SDKHook(entity, SDKHook_SpawnPost, OnClientSpawnPost);
+}
+public void OnClientSpawnPost(int client) {
+	if (!IsClientInGame(client) || !IsPlayerAlive(client) || GetClientTeam(client)<=1 || IsFakeClient(client)) return;
+	if (!clientUGCloaded[client]) {
+		clientUGCloaded[client]=true;
+		UpdateAllowedUGC(client);
+	}
 }
 
 void CheckClientItems(int client) {

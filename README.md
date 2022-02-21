@@ -52,5 +52,5 @@ to other clients. The player should reconnect in this case to trigger the downlo
 ## Dependencies
 
 * This plugin requires [TF2 Attributes](https://github.com/nosoop/tf2attributes) to check if an items has a custom name/description/decal.   
-  I'm using nosoops fork, but FlamingSarges original might work as well
+  I'm using nosoops fork, but FlamingSarges original might work as well. In any case Version 1.3.2 or above is required.
 * [TrustFactor](https://github.com/DosMike/SM-TrustFactor) is required to check players trustworthiness.
