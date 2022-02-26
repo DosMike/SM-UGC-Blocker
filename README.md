@@ -49,6 +49,15 @@ be blocked from being executed.
 Getting permission to use sprays or jingles after being in the server for some seconds will *not* send the files
 to other clients. The player should reconnect in this case to trigger the download.
 
+### Command
+
+The logs can also be checked directly from the server with the command `sm_ugclookup` or `sm_ugclookuplogs`.
+Both commands require the Kick flag by default and the former tried to check online players first.
+
+Arguments is a player name, SteamID or a filename. If an online player is found, it will return their current
+spray and jingle file as well as the types of UGC they can currently use. Otherwise the log will be scanned through
+and the last up to 50 entries will be dumped to your console, including the timestamp.
+
 ## Dependencies
 
 * This plugin requires [TF2 Attributes](https://github.com/nosoop/tf2attributes) to check if an items has a custom name/description/decal.   
