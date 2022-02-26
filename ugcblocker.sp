@@ -1,5 +1,6 @@
 #include <sourcemod>
 #include <sdkhooks>
+#include <regex>
 
 #include <tf2_stocks>
 #undef REQUIRE_PLUGIN
@@ -74,6 +75,8 @@ void HookAndLoad(ConVar cvar, ConVarChanged handler) {
 
 public void OnPluginStart() {
 	
+	LoadTranslations("common.phrases");
+	
 	cvar_disable_Spray = CreateConVar("sm_ugc_disable_spray", "0", "Always block players from using sprays", FCVAR_HIDDEN|FCVAR_UNLOGGED, true, 0.0, true, 1.0);
 	HookAndLoad(cvar_disable_Spray, OnCvarChange_DisableSpray);
 	
@@ -120,6 +123,9 @@ public void OnPluginStart() {
 	} //for other games we use the spawn post sdkhook
 	
 	UpdateAllowedUGCAll();
+	
+	RegAdminCmd("sm_ugclookup", Command_LookupFile, ADMFLAG_KICK, "Usage: sm_ugclookup <userid|name|steamid|filename> - Lookup ugc filenames <-> SteamIDs. Return online players if any match, scan though log otherwise");
+	RegAdminCmd("sm_ugclookuplogs", Command_LookupFile, ADMFLAG_KICK, "Usage: sm_ugclookuplogs <name|steamid|filename> - Lookup ugc filenames <-> SteamIDs. Scan log files directly");
 }
 
 public void OnCvarChange_DisableSpray(ConVar convar, const char[] oldValue, const char[] newValue) {
@@ -212,6 +218,84 @@ public void OnCvarChange_LogUploads(ConVar convar, const char[] oldValue, const 
 }
 
 // ===== Ok, boilerplate is over =====
+
+public Action Command_LookupFile(int client, int args) {
+	if (GetCmdArgs() < 1) {
+		ReplyToCommand(client, "Requires a name, userid, steamid or (partial) filename");
+		return Plugin_Handled;
+	}
+	char target[128];
+	bool forcedLogs;
+	GetCmdArg(0, target, sizeof(target));
+	if (StrContains(target, "log", false)) forcedLogs=true;
+	GetCmdArgString(target, sizeof(target));
+	int online;
+	{
+		int results[1];
+		char name[4];
+		bool tnisml;
+		int hits = ProcessTargetString(target, client, results, 1, COMMAND_FILTER_NO_MULTI|COMMAND_FILTER_NO_IMMUNITY|COMMAND_FILTER_NO_BOTS, name, 0, tnisml);
+		if (hits < 0) { //dont want a message on hits==0
+			ReplyToTargetError(client, hits);
+		} else if (hits > 0) {
+			online = results[0];
+		}
+	}
+	if (!forcedLogs && online > 0) {
+		ReplyToCommand(client, "[UGC] Player '%L'", online);
+		if (clientSprayFile[online][0]) ReplyToCommand(client, "[UGC] > Spray: %s", clientSprayFile[online]);
+		else ReplyToCommand(client, "[UGC] > No Spray received");
+		if (clientJingleFile[online][0]) ReplyToCommand(client, "[UGC] > Jingle: %s", clientJingleFile[online]);
+		else ReplyToCommand(client, "[UGC] > No Jingle received");
+		UGCFlagString(clientUGC[online], target, sizeof(target));
+		ReplyToCommand(client, "[UGC] Has permission to %s", target);
+	} else {
+		File log = OpenFile("user_custom_received.log", "rt");
+		if (log == INVALID_HANDLE) {
+			ReplyToCommand(client, "[UGC] Logs not found");
+		} else {
+			Regex entry = new Regex("^L ([\\w\\/]+ - [0-9:]+): Received user_custom(.*) from (.*)<[0-9]+><(.*)><(?:Console)?>$", PCRE_UTF8|PCRE_CASELESS);
+			char line[256];
+			char matchTime[32], matchFile[32], matchName[64], matchSteamID[64];
+			ArrayList hits = new ArrayList(ByteCountToCells(256));
+			while (log.ReadLine(line, sizeof(line))) {
+				if (entry.Match(line)>0) {
+					entry.GetSubString(1, matchTime, sizeof(matchTime));
+					entry.GetSubString(2, matchFile, sizeof(matchFile));
+					entry.GetSubString(3, matchName, sizeof(matchName));
+					entry.GetSubString(4, matchSteamID, sizeof(matchSteamID));
+					
+					if (StrContains(matchSteamID, target, false)>=0 || StrContains(matchName, target, false)>=0 || StrContains(matchFile, target, false)>=0) {
+						Format(line, sizeof(line), " %s  %s<%s>  at %s", matchFile, matchName, matchSteamID, matchTime);
+						hits.PushString(line);
+					}
+				}
+			}
+			delete log;
+			delete entry;
+			if (hits.Length==0) {
+				ReplyToCommand(client, "[UGC] No hits for target %s", target);
+			} else {
+				bool restoreToChat;
+				if (GetCmdReplySource() == SM_REPLY_TO_CHAT) {
+					ReplyToCommand(client, "[UGC] Check console for output");
+					SetCmdReplySource(SM_REPLY_TO_CONSOLE);
+					restoreToChat = true;
+				}
+				ReplyToCommand(client, "[UGC] Last %i logged hits for target %s", hits.Length>50?50:hits.Length, target);
+				for (int i=1,back=hits.Length-1;i<=50 && back>=0;i+=1,back-=1) {
+					hits.GetString(back, line, sizeof(line));
+					ReplyToCommand(client, " %2i %s", i, line);
+				}
+				if (restoreToChat) {
+					SetCmdReplySource(SM_REPLY_TO_CHAT);
+				}
+			}
+		}
+	}
+	return Plugin_Handled;
+}
+
 
 public void OnMapStart() {
 	if (bLogUserCustomUploads) {
