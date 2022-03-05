@@ -25,11 +25,19 @@ enum eUserGeneratedContent (<<=1) {
 	ugcDescription,
 }
 
+enum struct FileRequestData {
+	int target;
+	int source;
+	eUserGeneratedContent sourceType;
+}
+
 static bool clientUGCloaded[MAXPLAYERS+1]; //did we load ugc flags?
 static eUserGeneratedContent clientUGC[MAXPLAYERS+1]; //green-light flags for trusted 
 static eUserGeneratedContent checkUGCTypes; //we only care to check those
 static char clientSprayFile[MAXPLAYERS+1][128];
 static char clientJingleFile[MAXPLAYERS+1][128];
+static ArrayList clientFileRequestQueue; //flagging files as not transmitted
+static ArrayList clientFileActiveQueue; //active transmit queue
 
 static ConVar cvar_disable_Spray;
 static ConVar cvar_disable_Jingle;
@@ -296,7 +304,6 @@ public Action Command_LookupFile(int client, int args) {
 	return Plugin_Handled;
 }
 
-
 public void OnMapStart() {
 	if (bLogUserCustomUploads) {
 		char mapName[128];
@@ -304,6 +311,7 @@ public void OnMapStart() {
 		LogToFileEx("user_custom_received.log", "----- Map Changed To %s -----", mapName);
 	}
 }
+
 public Action OnFileReceive(int client, const char[] file) {
 	if (bLogUserCustomUploads) {
 		LogToFileEx("user_custom_received.log", "Received %s from %L", file, client);
@@ -314,14 +322,44 @@ public Action OnFileSend(int client, const char[] file) {
 	eUserGeneratedContent type;
 	int owner = GetOwnerOfUserFile(file, type);
 	if (owner < 0) {
-//		PrintToServer("Blocking sending UGC: '%s' to %N, unknown owner", file, client);
+		//block sending - unknown owner?
 		return Plugin_Handled;
 	} else if (owner > 0 && (checkUGCTypes&type) && !(clientUGC[owner]&type)) {
-//		PrintToServer("Blocking sending UGC: '%s' to %N, type not allowed from %L", file, client, owner);
+		if (!clientUGCloaded && type != ugcNone) {
+			//push file download later
+			FileRequestData queue;
+			queue.target = client;
+			queue.source = owner;
+			queue.sourceType = type;
+			clientFileRequestQueue.PushArray(queue);
+		}
+		//block sending - not allowed (yet)
 		return Plugin_Handled;
 	}
-//	PrintToServer("Sending %s to %N", file, client);
 	return Plugin_Continue;
+}
+public void DropFileTransfers(int client, bool target=true) {
+	int at;
+	if (target)
+		while ((at=clientFileRequestQueue.FindValue(client, FileRequestData::target))>=0)
+			clientFileRequestQueue.Erase(at);
+	while ((at=clientFileRequestQueue.FindValue(client, FileRequestData::source))>=0)
+		clientFileRequestQueue.Erase(at);
+}
+public void PushFilesFrom(int client, eUserGeneratedContent type) {
+	FileRequestData queue;
+	bool isActive = clientFileActiveQueue.Length>0;
+	//move entries
+	for (int at=clientFileRequestQueue.Length-1; at>=0; at--) {
+		clientFileRequestQueue.GetArray(at, queue);
+		if (at.source == client && at.sourceType == type) {
+			clientFileRequestQueue.Erase(at);
+			clientFileActiveQueue.PushArray(queue);
+		}
+	}
+	if (!isActive) {
+		//start transmitting files
+	}
 }
 
 public void OnClientConnected(int client) {
@@ -334,15 +372,14 @@ public void OnClientPutInServer(int client) {
 	char buffer[32];
 	if (GetPlayerDecalFile(client, buffer, sizeof(buffer))) {
 		Format(clientSprayFile[client], sizeof(clientSprayFile[]), "user_custom/%c%c/%s.dat", buffer[0], buffer[1], buffer);
-//		PrintToServer("Assigned decal file %s to %N", clientSprayFile[client], client);
-	}// else PrintToServer("Client %L has no decal file", client);
+	}
 	if (GetPlayerJingleFile(client, buffer, sizeof(buffer))) {
 		Format(clientJingleFile[client], sizeof(clientJingleFile[]), "user_custom/%c%c/%s.dat", buffer[0], buffer[1], buffer);
-//		PrintToServer("Assigned jingle file %s to %N", clientJingleFile[client], client);
-	}// else PrintToServer("Client %L has no jingle file", client);	
+	}
 }
 public void OnClientDisconnect_Post(int client) {
 	OnClientConnected(client); //cleanup is the same
+	DropFileTransfers(client); //cancel all transfers queued from and to that client
 }
 
 
@@ -383,6 +420,13 @@ static void UpdateAllowedUGC(int client) {
 		char buffer[72];
 		UGCFlagString(flags, buffer, sizeof(buffer));
 		PrintToChat(client, "[SM] You are allowed to use %s", buffer);
+		
+		if ((flags & ugcSpray) && !(previously & ugcSpray)) {
+			PushFilesFrom(client, ugcSpray);
+		}
+		if ((flags & ugcJingle) && !(previously & ugcJingle)) {
+			PushFilesFrom(client, ugcJingle);
+		}
 	}
 }
 
