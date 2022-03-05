@@ -327,32 +327,42 @@ public Action OnFileSend(int client, const char[] file) {
 	} else if (owner > 0 && (checkUGCTypes&type) && !(clientUGC[owner]&type)) {
 		if (!clientUGCloaded && type != ugcNone) {
 			//push file download later
-			FileRequestData queue;
-			queue.target = client;
-			queue.source = owner;
-			queue.sourceType = type;
-			clientFileRequestQueue.PushArray(queue);
+			QueueFileTransfer(client, owner, type);
 		}
 		//block sending - not allowed (yet)
 		return Plugin_Handled;
 	}
 	return Plugin_Continue;
 }
-public void DropFileTransfers(int client, bool target=true) {
-	int at;
-	if (target)
-		while ((at=clientFileRequestQueue.FindValue(client, FileRequestData::target))>=0)
-			clientFileRequestQueue.Erase(at);
-	while ((at=clientFileRequestQueue.FindValue(client, FileRequestData::source))>=0)
-		clientFileRequestQueue.Erase(at);
+void QueueFileTransfer(int to, int from, eUserGeneratedContent type) {
+	FileRequestData queue;
+	queue.target = GetClientUserId(to);
+	queue.source = GetClientUserId(from);
+	queue.sourceType = type;
+	clientFileRequestQueue.PushArray(queue);
 }
-public void PushFilesFrom(int client, eUserGeneratedContent type) {
+void DropFileTransfers(int client, bool target=true) {
+	int user=GetClientUserId(client);
+	int at;
+	if (target) {
+		while ((at=clientFileRequestQueue.FindValue(user, FileRequestData::target))>=0)
+			clientFileRequestQueue.Erase(at);
+		while ((at=clientFileActiveQueue.FindValue(user, FileRequestData::target))>=0)
+			clientFileActiveQueue.Erase(at);
+	}
+	while ((at=clientFileRequestQueue.FindValue(user, FileRequestData::source))>=0)
+		clientFileRequestQueue.Erase(at);
+	while ((at=clientFileActiveQueue.FindValue(user, FileRequestData::source))>=0)
+		clientFileActiveQueue.Erase(at);
+}
+void PushFilesFrom(int client, eUserGeneratedContent type) {
+	int fromuser=GetClientUserId(client);
 	FileRequestData queue;
 	bool isActive = clientFileActiveQueue.Length>0;
 	//move entries
 	for (int at=clientFileRequestQueue.Length-1; at>=0; at--) {
 		clientFileRequestQueue.GetArray(at, queue);
-		if (at.source == client && at.sourceType == type) {
+		if (at.source == fromuser && at.sourceType == type) {
 			clientFileRequestQueue.Erase(at);
 			clientFileActiveQueue.PushArray(queue);
 		}
