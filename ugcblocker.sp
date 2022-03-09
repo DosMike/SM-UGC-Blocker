@@ -9,6 +9,9 @@
 #include <tf2attributes>
 #include <sourcebanspp>
 #define REQUIRE_PLUGIN
+#undef REQUIRE_EXTENSIONS
+#include <filenetmessages>
+#define REQUIRE_EXTENSIONS
 
 #include <trustfactor>
 
@@ -26,11 +29,25 @@ enum eUserGeneratedContent (<<=1) {
 	ugcDescription,
 }
 
+enum struct FileRequestData {
+	int target;
+	int source;
+	eUserGeneratedContent sourceType;
+}
+enum struct FileUploadScan {
+	int userId;
+	int ttl;
+	char auth[32];
+	char file[PLATFORM_MAX_PATH];
+}
+
 static bool clientUGCloaded[MAXPLAYERS+1]; //did we load ugc flags?
 static eUserGeneratedContent clientUGC[MAXPLAYERS+1]; //green-light flags for trusted 
 static eUserGeneratedContent checkUGCTypes; //we only care to check those
 static char clientSprayFile[MAXPLAYERS+1][128];
 static char clientJingleFile[MAXPLAYERS+1][128];
+static ArrayList fileRequestQueue; //flagging files as not transmitted
+static ArrayList fileUploadScanQueue; //files that were just uploaded and need to be scanned
 
 static ConVar cvar_disable_Spray;
 static ConVar cvar_disable_Jingle;
@@ -55,15 +72,9 @@ static ConVar cvar_logUploads;
 static bool bLogUserCustomUploads;
 static ConVar cvar_scanUserFiles;
 static bool bScanUserFiles;
-enum struct FileUploadScan {
-	int userId;
-	int ttl;
-	char auth[32];
-	char file[PLATFORM_MAX_PATH];
-}
-static ArrayList fileUploadScanQueue;
 
 static bool depSBPP;
+static bool depFNM;
 
 public Plugin myinfo = {
 	name = "UGC Blocker",
@@ -132,6 +143,7 @@ public void OnPluginStart() {
 	AutoExecConfig();
 	bConVarUpdates=true;
 	
+	fileRequestQueue = new ArrayList(sizeof(FileRequestData));
 	fileUploadScanQueue = new ArrayList(sizeof(FileUploadScan));
 	
 	AddTempEntHook("Player Decal", OnTempEnt_PlayerDecal);
@@ -237,16 +249,27 @@ public void OnCvarChange_LogUploads(ConVar convar, const char[] oldValue, const 
 }
 public void OnCvarChange_ScanUserFiles(ConVar convar, const char[] oldValue, const char[] newValue) {
 	bScanUserFiles = convar.BoolValue;
+	if (!bScanUserFiles) {
+		fileUploadScanQueue.Clear();
+	}
 }
 
 public void OnAllPluginsLoaded() {
 	depSBPP = LibraryExists("sourcebans++");
+	depFNM = LibraryExists("filenetmessages");
 }
 public void OnLibraryAdded(const char[] name) {
 	if (StrEqual(name, "sourcebans++")) depSBPP = true;
+	if (StrEqual(name, "filenetmessages")) depFNM = true;
 }
 public void OnLibraryRemoved(const char[] name) {
-	if (StrEqual(name, "sourcebans++")) depSBPP = false;
+	if (StrEqual(name, "sourcebans++")) {
+		depSBPP = false;
+	}
+	if (StrEqual(name, "filenetmessages")) {
+		depFNM = false;
+		fileRequestQueue.Clear();
+	}
 }
 
 
@@ -358,7 +381,6 @@ public Action Command_ScanUserCustom(int client, int args) {
 //	SetCmdReplySource(rs);
 }
 
-
 public void OnMapStart() {
 	if (bLogUserCustomUploads) {
 		char mapName[128];
@@ -368,6 +390,7 @@ public void OnMapStart() {
 	
 	CreateTimer(0.5, FileScanTimer, _, TIMER_REPEAT|TIMER_FLAG_NO_MAPCHANGE);
 }
+
 public Action OnFileReceive(int client, const char[] file) {
 	if (bLogUserCustomUploads) {
 		LogToFileEx("user_custom_received.log", "Received %s from %L", file, client);
@@ -383,14 +406,49 @@ public Action OnFileSend(int client, const char[] file) {
 	eUserGeneratedContent type;
 	int owner = GetOwnerOfUserFile(file, type);
 	if (owner < 0) {
-//		PrintToServer("Blocking sending UGC: '%s' to %N, unknown owner", file, client);
+		//block sending - unknown owner?
 		return Plugin_Handled;
 	} else if (owner > 0 && (checkUGCTypes&type) && !(clientUGC[owner]&type)) {
-//		PrintToServer("Blocking sending UGC: '%s' to %N, type not allowed from %L", file, client, owner);
+		if (depFNM && !clientUGCloaded && type != ugcNone) {
+			//push file download later
+			QueueFileTransfer(client, owner, type);
+		}
+		//block sending - not allowed (yet)
 		return Plugin_Handled;
 	}
-//	PrintToServer("Sending %s to %N", file, client);
 	return Plugin_Continue;
+}
+void QueueFileTransfer(int to, int from, eUserGeneratedContent type) {
+	FileRequestData queue;
+	queue.target = GetClientUserId(to);
+	queue.source = GetClientUserId(from);
+	queue.sourceType = type;
+	fileRequestQueue.PushArray(queue);
+}
+void DropFileTransfers(int client, bool target=true) {
+	int user=GetClientUserId(client);
+	int index;
+	if (target) {
+		while ((index=fileRequestQueue.FindValue(user, FileRequestData::target))>=0)
+			fileRequestQueue.Erase(index);
+	}
+	while ((index=fileRequestQueue.FindValue(user, FileRequestData::source))>=0)
+		fileRequestQueue.Erase(index);
+}
+void PushFilesFrom(int client, eUserGeneratedContent type) {
+	int fromuser=GetClientUserId(client);
+	FileRequestData queue;
+	//move entries
+	for (int index=fileRequestQueue.Length-1; index>=0; index--) {
+		fileRequestQueue.GetArray(index, queue);
+		if (queue.source == fromuser && queue.sourceType == type) {
+			fileRequestQueue.Erase(index);
+			if (type & ugcSpray)
+				FNM_SendFile(GetClientOfUserId(queue.target), "%s", clientSprayFile[client]);
+			else if (type & ugcJingle)
+				FNM_SendFile(GetClientOfUserId(queue.target), "%s", clientJingleFile[client]);
+		}
+	}
 }
 
 public void OnClientConnected(int client) {
@@ -403,15 +461,14 @@ public void OnClientPutInServer(int client) {
 	char buffer[32];
 	if (GetPlayerDecalFile(client, buffer, sizeof(buffer))) {
 		Format(clientSprayFile[client], sizeof(clientSprayFile[]), "user_custom/%c%c/%s.dat", buffer[0], buffer[1], buffer);
-//		PrintToServer("Assigned decal file %s to %N", clientSprayFile[client], client);
-	}// else PrintToServer("Client %L has no decal file", client);
+	}
 	if (GetPlayerJingleFile(client, buffer, sizeof(buffer))) {
 		Format(clientJingleFile[client], sizeof(clientJingleFile[]), "user_custom/%c%c/%s.dat", buffer[0], buffer[1], buffer);
-//		PrintToServer("Assigned jingle file %s to %N", clientJingleFile[client], client);
-	}// else PrintToServer("Client %L has no jingle file", client);	
+	}
 }
 public void OnClientDisconnect_Post(int client) {
 	OnClientConnected(client); //cleanup is the same
+	DropFileTransfers(client); //cancel all transfers queued from and to that client
 }
 
 
@@ -452,6 +509,12 @@ static void UpdateAllowedUGC(int client) {
 		char buffer[72];
 		UGCFlagString(flags, buffer, sizeof(buffer));
 		PrintToChat(client, "[SM] You are allowed to use %s", buffer);
+		
+		//find flags that turned on, mask with spray and jingle
+		if (depFNM) {
+			eUserGeneratedContent send = (flags & ~previously) & (ugcSpray|ugcJingle);
+			PushFilesFrom(client, send);
+		}
 	}
 }
 
