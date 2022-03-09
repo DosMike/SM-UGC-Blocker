@@ -4,6 +4,7 @@ auth github ${spsgitpat}
 dependency github nosoop/SM-TFEconData latest
 dependency github nosoop/SM-TFUtils latest
 dependency github nosoop/tf2attributes master-SNAPSHOT
+dependency github sbpp/sourcebans-pp 1.6.4
 
 dependency github DosMike/SM-TrustFactor latest
 

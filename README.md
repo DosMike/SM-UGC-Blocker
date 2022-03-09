@@ -39,6 +39,11 @@ TrustFlags required to allow jingles, empty to always allow
 `sm_ugc_log_uploads "1"`   
 Log all client file uploads to `user_custom_received.log`
 
+`sm_ugc_scan_uploads "1"`   
+Performa a scan for Trojan:BAT/Killav.B in sprays and jingles.   
+If a file scans positive, all admins with the kick flag will be notified and the player will be banned (using sourcebans++ if applicable).   
+**Please validate the file & ban manually as the automated process might not work 100%.**
+
 Items that do not pass the filters will currently just be removed from the player.   
 In case of weapons i might look into using TF2 Gimme or TF2 Items to generate and re-equip "clean" versions.
 
@@ -49,7 +54,7 @@ be blocked from being executed.
 Getting permission to use sprays or jingles after being in the server for some seconds will *not* send the files
 to other clients. The player should reconnect in this case to trigger the download.
 
-### Command
+### Commands
 
 The logs can also be checked directly from the server with the command `sm_ugclookup` or `sm_ugclookuplogs`.
 Both commands require the Kick flag by default and the former tried to check online players first.
@@ -57,6 +62,10 @@ Both commands require the Kick flag by default and the former tried to check onl
 Arguments is a player name, SteamID or a filename. If an online player is found, it will return their current
 spray and jingle file as well as the types of UGC they can currently use. Otherwise the log will be scanned through
 and the last up to 50 entries will be dumped to your console, including the timestamp.
+
+The command `sm_ugcscanusercustom` requires the root admin flag and will scan all files in `/download/user_custom`
+for suspicious content, as if just uploaded. Depending on how often you clean that directory, this might take some
+time. This command will not ban players, but it will still report any files it found.
 
 ## Dependencies
 
