@@ -354,7 +354,7 @@ public Action Command_ScanUserCustom(int client, int args) {
 	}
 	delete layer0;
 	ReplyToCommand(client, "[UGC Blocker] Scanned %i files in /user_custom/", scanned);
-	ReplyToCommand(client, "> Trojan:BAT/Killav.B : %3i %6.2f%%", trojanbatkillavb, trojanbatkillavb*100.0/scanned);
+	ReplyToCommand(client, "> Files marked Trojan:BAT/Killav.B : %3i %6.2f%%", trojanbatkillavb, trojanbatkillavb*100.0/scanned);
 //	SetCmdReplySource(rs);
 }
 
