@@ -34,14 +34,20 @@ enum struct FileRequestData {
 	int source;
 	eUserGeneratedContent sourceType;
 }
+enum struct FileUploadScan {
+	int userId;
+	int ttl;
+	char auth[32];
+	char file[PLATFORM_MAX_PATH];
+}
 
 static bool clientUGCloaded[MAXPLAYERS+1]; //did we load ugc flags?
 static eUserGeneratedContent clientUGC[MAXPLAYERS+1]; //green-light flags for trusted 
 static eUserGeneratedContent checkUGCTypes; //we only care to check those
 static char clientSprayFile[MAXPLAYERS+1][128];
 static char clientJingleFile[MAXPLAYERS+1][128];
-static ArrayList clientFileRequestQueue; //flagging files as not transmitted
-static ArrayList clientFileActiveQueue; //active transmit queue
+static ArrayList fileRequestQueue; //flagging files as not transmitted
+static ArrayList fileUploadScanQueue; //files that were just uploaded and need to be scanned
 
 static ConVar cvar_disable_Spray;
 static ConVar cvar_disable_Jingle;
@@ -66,15 +72,9 @@ static ConVar cvar_logUploads;
 static bool bLogUserCustomUploads;
 static ConVar cvar_scanUserFiles;
 static bool bScanUserFiles;
-enum struct FileUploadScan {
-	int userId;
-	int ttl;
-	char auth[32];
-	char file[PLATFORM_MAX_PATH];
-}
-static ArrayList fileUploadScanQueue;
 
 static bool depSBPP;
+static bool depFNM;
 
 public Plugin myinfo = {
 	name = "UGC Blocker",
@@ -143,6 +143,7 @@ public void OnPluginStart() {
 	AutoExecConfig();
 	bConVarUpdates=true;
 	
+	fileRequestQueue = new ArrayList(sizeof(FileRequestData));
 	fileUploadScanQueue = new ArrayList(sizeof(FileUploadScan));
 	
 	AddTempEntHook("Player Decal", OnTempEnt_PlayerDecal);
@@ -248,16 +249,27 @@ public void OnCvarChange_LogUploads(ConVar convar, const char[] oldValue, const 
 }
 public void OnCvarChange_ScanUserFiles(ConVar convar, const char[] oldValue, const char[] newValue) {
 	bScanUserFiles = convar.BoolValue;
+	if (!bScanUserFiles) {
+		fileUploadScanQueue.Clear();
+	}
 }
 
 public void OnAllPluginsLoaded() {
 	depSBPP = LibraryExists("sourcebans++");
+	depFNM = LibraryExists("filenetmessages");
 }
 public void OnLibraryAdded(const char[] name) {
 	if (StrEqual(name, "sourcebans++")) depSBPP = true;
+	if (StrEqual(name, "filenetmessages")) depFNM = true;
 }
 public void OnLibraryRemoved(const char[] name) {
-	if (StrEqual(name, "sourcebans++")) depSBPP = false;
+	if (StrEqual(name, "sourcebans++")) {
+		depSBPP = false;
+	}
+	if (StrEqual(name, "filenetmessages")) {
+		depFNM = false;
+		fileRequestQueue.Clear();
+	}
 }
 
 
@@ -397,7 +409,7 @@ public Action OnFileSend(int client, const char[] file) {
 		//block sending - unknown owner?
 		return Plugin_Handled;
 	} else if (owner > 0 && (checkUGCTypes&type) && !(clientUGC[owner]&type)) {
-		if (!clientUGCloaded && type != ugcNone) {
+		if (depFNM && !clientUGCloaded && type != ugcNone) {
 			//push file download later
 			QueueFileTransfer(client, owner, type);
 		}
@@ -411,36 +423,31 @@ void QueueFileTransfer(int to, int from, eUserGeneratedContent type) {
 	queue.target = GetClientUserId(to);
 	queue.source = GetClientUserId(from);
 	queue.sourceType = type;
-	clientFileRequestQueue.PushArray(queue);
+	fileRequestQueue.PushArray(queue);
 }
 void DropFileTransfers(int client, bool target=true) {
 	int user=GetClientUserId(client);
-	int at;
+	int index;
 	if (target) {
-		while ((at=clientFileRequestQueue.FindValue(user, FileRequestData::target))>=0)
-			clientFileRequestQueue.Erase(at);
-		while ((at=clientFileActiveQueue.FindValue(user, FileRequestData::target))>=0)
-			clientFileActiveQueue.Erase(at);
+		while ((index=fileRequestQueue.FindValue(user, FileRequestData::target))>=0)
+			fileRequestQueue.Erase(index);
 	}
-	while ((at=clientFileRequestQueue.FindValue(user, FileRequestData::source))>=0)
-		clientFileRequestQueue.Erase(at);
-	while ((at=clientFileActiveQueue.FindValue(user, FileRequestData::source))>=0)
-		clientFileActiveQueue.Erase(at);
+	while ((index=fileRequestQueue.FindValue(user, FileRequestData::source))>=0)
+		fileRequestQueue.Erase(index);
 }
 void PushFilesFrom(int client, eUserGeneratedContent type) {
 	int fromuser=GetClientUserId(client);
 	FileRequestData queue;
-	bool isActive = clientFileActiveQueue.Length>0;
 	//move entries
-	for (int at=clientFileRequestQueue.Length-1; at>=0; at--) {
-		clientFileRequestQueue.GetArray(at, queue);
+	for (int index=fileRequestQueue.Length-1; index>=0; index--) {
+		fileRequestQueue.GetArray(index, queue);
 		if (queue.source == fromuser && queue.sourceType == type) {
-			clientFileRequestQueue.Erase(at);
-			clientFileActiveQueue.PushArray(queue);
+			fileRequestQueue.Erase(index);
+			if (type & ugcSpray)
+				FNM_SendFile(GetClientOfUserId(queue.target), "%s", clientSprayFile[client]);
+			else if (type & ugcJingle)
+				FNM_SendFile(GetClientOfUserId(queue.target), "%s", clientJingleFile[client]);
 		}
-	}
-	if (!isActive) {
-		//start transmitting files
 	}
 }
 
@@ -503,11 +510,10 @@ static void UpdateAllowedUGC(int client) {
 		UGCFlagString(flags, buffer, sizeof(buffer));
 		PrintToChat(client, "[SM] You are allowed to use %s", buffer);
 		
-		if ((flags & ugcSpray) && !(previously & ugcSpray)) {
-			PushFilesFrom(client, ugcSpray);
-		}
-		if ((flags & ugcJingle) && !(previously & ugcJingle)) {
-			PushFilesFrom(client, ugcJingle);
+		//find flags that turned on, mask with spray and jingle
+		if (depFNM) {
+			eUserGeneratedContent send = (flags & ~previously) & (ugcSpray|ugcJingle);
+			PushFilesFrom(client, send);
 		}
 	}
 }
