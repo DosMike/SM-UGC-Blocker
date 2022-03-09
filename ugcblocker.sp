@@ -7,10 +7,11 @@
 #include <tf_econ_data>
 #include <tf2utils>
 #include <tf2attributes>
-#include <sourcebanspp>
+#include "sourcebanspp.inc"
 #define REQUIRE_PLUGIN
 #undef REQUIRE_EXTENSIONS
-#include <filenetmessages>
+#include "filenetmessages.inc"
+#include "latedl.inc"
 #define REQUIRE_EXTENSIONS
 
 #include <trustfactor>
@@ -75,6 +76,7 @@ static bool bScanUserFiles;
 
 static bool depSBPP;
 static bool depFNM;
+static bool depLateDL;
 
 public Plugin myinfo = {
 	name = "UGC Blocker",
@@ -257,10 +259,12 @@ public void OnCvarChange_ScanUserFiles(ConVar convar, const char[] oldValue, con
 public void OnAllPluginsLoaded() {
 	depSBPP = LibraryExists("sourcebans++");
 	depFNM = LibraryExists("filenetmessages");
+	depLateDL = LibraryExists("Late Downloads");
 }
 public void OnLibraryAdded(const char[] name) {
 	if (StrEqual(name, "sourcebans++")) depSBPP = true;
 	if (StrEqual(name, "filenetmessages")) depFNM = true;
+	if (StrEqual(name, "Late Downloads")) depLateDL = true;
 }
 public void OnLibraryRemoved(const char[] name) {
 	if (StrEqual(name, "sourcebans++")) {
@@ -268,6 +272,10 @@ public void OnLibraryRemoved(const char[] name) {
 	}
 	if (StrEqual(name, "filenetmessages")) {
 		depFNM = false;
+		fileRequestQueue.Clear();
+	}
+	if (StrEqual(name, "Late Downloads")) {
+		depLateDL = false;
 		fileRequestQueue.Clear();
 	}
 }
@@ -409,7 +417,7 @@ public Action OnFileSend(int client, const char[] file) {
 		//block sending - unknown owner?
 		return Plugin_Handled;
 	} else if (owner > 0 && (checkUGCTypes&type) && !(clientUGC[owner]&type)) {
-		if (depFNM && !clientUGCloaded && type != ugcNone) {
+		if ((depFNM||depLateDL) && !clientUGCloaded && type != ugcNone) {
 			//push file download later
 			QueueFileTransfer(client, owner, type);
 		}
@@ -443,10 +451,13 @@ void PushFilesFrom(int client, eUserGeneratedContent type) {
 		fileRequestQueue.GetArray(index, queue);
 		if (queue.source == fromuser && queue.sourceType == type) {
 			fileRequestQueue.Erase(index);
-			if (type & ugcSpray)
-				FNM_SendFile(GetClientOfUserId(queue.target), "%s", clientSprayFile[client]);
-			else if (type & ugcJingle)
-				FNM_SendFile(GetClientOfUserId(queue.target), "%s", clientJingleFile[client]);
+			if (type & ugcSpray) {
+				if (depFNM) FNM_SendFile(GetClientOfUserId(queue.target), "%s", clientSprayFile[client]);
+				else if (depLateDL) AddLateDownload(clientSprayFile[client], false, queue.target);
+			} else if (type & ugcJingle) {
+				if (depFNM) FNM_SendFile(GetClientOfUserId(queue.target), "%s", clientJingleFile[client]);
+				else if (depLateDL) AddLateDownload(clientJingleFile[client], false, queue.target);
+			}
 		}
 	}
 }
@@ -511,7 +522,7 @@ static void UpdateAllowedUGC(int client) {
 		PrintToChat(client, "[SM] You are allowed to use %s", buffer);
 		
 		//find flags that turned on, mask with spray and jingle
-		if (depFNM) {
+		if (depFNM||depLateDL) {
 			eUserGeneratedContent send = (flags & ~previously) & (ugcSpray|ugcJingle);
 			PushFilesFrom(client, send);
 		}
