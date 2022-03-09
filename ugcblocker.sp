@@ -8,6 +8,9 @@
 #include <tf2utils>
 #include <tf2attributes>
 #define REQUIRE_PLUGIN
+#undef REQUIRE_EXTENSIONS
+#include <filenetmessages>
+#define REQUIRE_EXTENSIONS
 
 #include <trustfactor>
 
@@ -362,7 +365,7 @@ void PushFilesFrom(int client, eUserGeneratedContent type) {
 	//move entries
 	for (int at=clientFileRequestQueue.Length-1; at>=0; at--) {
 		clientFileRequestQueue.GetArray(at, queue);
-		if (at.source == fromuser && at.sourceType == type) {
+		if (queue.source == fromuser && queue.sourceType == type) {
 			clientFileRequestQueue.Erase(at);
 			clientFileActiveQueue.PushArray(queue);
 		}
