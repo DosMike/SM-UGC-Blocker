@@ -53,6 +53,8 @@ static bool bConVarUpdates; //allow user flag updates from convar changes, disab
 
 static ConVar cvar_logUploads;
 static bool bLogUserCustomUploads;
+static ConVar cvar_scanUserFiles;
+static bool bScanUserFiles;
 enum struct FileUploadScan {
 	int userId;
 	int ttl;
@@ -123,6 +125,9 @@ public void OnPluginStart() {
 	
 	cvar_logUploads = CreateConVar("sm_ugc_log_uploads", "1", "Log all client file uploads to user_custom_received.log", FCVAR_HIDDEN|FCVAR_UNLOGGED, true, 0.0, true, 1.0);
 	HookAndLoad(cvar_logUploads, OnCvarChange_LogUploads);
+	
+	cvar_scanUserFiles = CreateConVar("sm_ugc_scan_uploads", "1", "Scan user upload for suspicious content", FCVAR_HIDDEN|FCVAR_UNLOGGED, true, 0.0, true, 1.0);
+	HookAndLoad(cvar_scanUserFiles, OnCvarChange_ScanUserFiles);
 	
 	AutoExecConfig();
 	bConVarUpdates=true;
@@ -229,6 +234,9 @@ public void OnCvarChange_TrustDescription(ConVar convar, const char[] oldValue, 
 }
 public void OnCvarChange_LogUploads(ConVar convar, const char[] oldValue, const char[] newValue) {
 	bLogUserCustomUploads = convar.BoolValue;
+}
+public void OnCvarChange_ScanUserFiles(ConVar convar, const char[] oldValue, const char[] newValue) {
+	bScanUserFiles = convar.BoolValue;
 }
 
 public void OnAllPluginsLoaded() {
@@ -364,7 +372,7 @@ public Action OnFileReceive(int client, const char[] file) {
 	if (bLogUserCustomUploads) {
 		LogToFileEx("user_custom_received.log", "Received %s from %L", file, client);
 	}
-	if (StrContains(file, "user_custom/")>=0) {
+	if (bScanUserFiles && StrContains(file, "user_custom/")>=0) {
 		char filename[128];
 		Format(filename, sizeof(filename), "download/%s", file);
 		AddFileForScanning(client, filename);
@@ -684,18 +692,18 @@ static int QuickScanFileTojanBatKillavB(const char[] file) {
 	char buffer[1024];
 	int hits;
 	if (!FileExists(file)) {
-		PrintToServer(">> File %s does not exist", file);
+//		PrintToServer(">> File %s does not exist", file);
 		return 0;
 	}
 	File fhdl = OpenFile(file, "rt");
 	if (fhdl == null) {
-		PrintToServer(">> No permission to read file %s", file);
+//		PrintToServer(">> No permission to read file %s", file);
 		return 0;
 	}
 	int read = fhdl.ReadString(buffer, 16, 16);
 	if (read <= 0) {
 		delete fhdl;
-		PrintToServer(">> Could not read file %s", file);
+//		PrintToServer(">> Could not read file %s", file);
 		return 0; //can't read
 	}
 	
@@ -724,7 +732,6 @@ static int QuickScanFileTojanBatKillavB(const char[] file) {
 			}
 	}
 	delete fhdl;
-	PrintToServer(">> Scanned %s successfully", file);
 	return hits;
 }
 
