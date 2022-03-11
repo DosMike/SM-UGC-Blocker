@@ -4,6 +4,16 @@ User Generated Content (UGC) can become a concern for server owners if bad actor
 
 This can include bad language in chat, on items names and item descriptions as well has NSFW / illegal imagery for custom decals and sprays.
 
+### Features
+
+* Restrict usage of sprays, jingles (TF2: decals, item names and descriptions) based on TrustFactor
+* Log files uploaded from clients
+* Scan uploaded files for fake AV triggers (and ban on detection)
+* Ingame commands to forward and backwards look-up of filenames for a players spray/jingle
+* Late download sprays if initially blocked due to permission granted later
+
+### Config
+
 This plugin allows you to control when players are able to use custom decals, item names, descriptions and sprays through the following convars.
 
 `sm_ugc_disable_decal "0"`   
@@ -67,8 +77,17 @@ The command `sm_ugcscanusercustom` requires the root admin flag and will scan al
 for suspicious content, as if just uploaded. Depending on how often you clean that directory, this might take some
 time. This command will not ban players, but it will still report any files it found.
 
-## Dependencies
+### Dependencies
+
+While this plugin was originally written for TF2, I should have changed it to work on other games as well.
+As a result dependencies that do not apply to your game should only be required for compilation.
 
 * This plugin requires [TF2 Attributes](https://github.com/nosoop/tf2attributes) to check if an items has a custom name/description/decal.   
   I'm using nosoops fork, but FlamingSarges original might work as well. In any case Version 1.3.2 or above is required.
 * [TrustFactor](https://github.com/DosMike/SM-TrustFactor) is required to check players trustworthiness.
+
+* For late downloading / invisible spray fix install one of these (optional). While FNM is more geared towards single player transfers, both
+  plugins seem fit for the job, and should work. Without this, it might take a map change after another player joins before they receive that
+  players spray/jingle file.
+  * [FileNetMessage](https://forums.alliedmods.net/showthread.php?t=233549)
+  * [LateDL](https://forums.alliedmods.net/showthread.php?t=305153)
