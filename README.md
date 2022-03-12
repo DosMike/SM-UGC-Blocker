@@ -4,6 +4,16 @@ User Generated Content (UGC) can become a concern for server owners if bad actor
 
 This can include bad language in chat, on items names and item descriptions as well has NSFW / illegal imagery for custom decals and sprays.
 
+### Features
+
+* Restrict usage of sprays, jingles (TF2: decals, item names and descriptions) based on TrustFactor
+* Log files uploaded from clients
+* Scan uploaded files for fake AV triggers (and ban on detection)
+* Ingame commands to forward and backwards look-up of filenames for a players spray/jingle
+* Late download sprays if initially blocked due to permission granted later
+
+### Config
+
 This plugin allows you to control when players are able to use custom decals, item names, descriptions and sprays through the following convars.
 
 `sm_ugc_disable_decal "0"`   
@@ -39,6 +49,11 @@ TrustFlags required to allow jingles, empty to always allow
 `sm_ugc_log_uploads "1"`   
 Log all client file uploads to `user_custom_received.log`
 
+`sm_ugc_scan_uploads "1"`   
+Performa a scan for Trojan:BAT/Killav.B in sprays and jingles.   
+If a file scans positive, all admins with the kick flag will be notified and the player will be banned (using sourcebans++ if applicable).   
+**Please validate the file & ban manually as the automated process might not work 100%.**
+
 Items that do not pass the filters will currently just be removed from the player.   
 In case of weapons i might look into using TF2 Gimme or TF2 Items to generate and re-equip "clean" versions.
 
@@ -49,7 +64,7 @@ be blocked from being executed.
 Getting permission to use sprays or jingles after being in the server for some seconds will *not* send the files
 to other clients. The player should reconnect in this case to trigger the download.
 
-### Command
+### Commands
 
 The logs can also be checked directly from the server with the command `sm_ugclookup` or `sm_ugclookuplogs`.
 Both commands require the Kick flag by default and the former tried to check online players first.
@@ -58,8 +73,21 @@ Arguments is a player name, SteamID or a filename. If an online player is found,
 spray and jingle file as well as the types of UGC they can currently use. Otherwise the log will be scanned through
 and the last up to 50 entries will be dumped to your console, including the timestamp.
 
-## Dependencies
+The command `sm_ugcscanusercustom` requires the root admin flag and will scan all files in `/download/user_custom`
+for suspicious content, as if just uploaded. Depending on how often you clean that directory, this might take some
+time. This command will not ban players, but it will still report any files it found.
+
+### Dependencies
+
+While this plugin was originally written for TF2, I should have changed it to work on other games as well.
+As a result dependencies that do not apply to your game should only be required for compilation.
 
 * This plugin requires [TF2 Attributes](https://github.com/nosoop/tf2attributes) to check if an items has a custom name/description/decal.   
   I'm using nosoops fork, but FlamingSarges original might work as well. In any case Version 1.3.2 or above is required.
 * [TrustFactor](https://github.com/DosMike/SM-TrustFactor) is required to check players trustworthiness.
+
+* For late downloading / invisible spray fix install one of these (optional). While FNM is more geared towards single player transfers, both
+  plugins seem fit for the job, and should work. Without this, it might take a map change after another player joins before they receive that
+  players spray/jingle file.
+  * [FileNetMessage](https://forums.alliedmods.net/showthread.php?t=233549)
+  * [LateDL](https://forums.alliedmods.net/showthread.php?t=305153)
