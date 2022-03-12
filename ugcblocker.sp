@@ -97,10 +97,18 @@ void HookAndLoad(ConVar cvar, ConVarChanged handler) {
 	Call_PushString(val);
 	Call_Finish();
 }
+public void LockConVar(ConVar convar, const char[] oldValue, const char[] newValue) {
+	char def[64];
+	if (GetPluginInfo(INVALID_HANDLE, PlInfo_Version, def, sizeof(def)) && !StrEqual(def, newValue)) convar.SetString(def,_,true);
+}
 
 public void OnPluginStart() {
 	
 	LoadTranslations("common.phrases");
+	
+	ConVar version = CreateConVar("sm_ugcblocker_version", PLUGIN_VERSION, _, FCVAR_NOTIFY|FCVAR_DONTRECORD);
+	HookAndLoad(version, LockConVar);
+	delete version;
 	
 	cvar_disable_Spray = CreateConVar("sm_ugc_disable_spray", "0", "Always block players from using sprays", FCVAR_HIDDEN|FCVAR_UNLOGGED, true, 0.0, true, 1.0);
 	HookAndLoad(cvar_disable_Spray, OnCvarChange_DisableSpray);
@@ -800,9 +808,9 @@ static int QuickScanFileTojanBatKillavB(const char[] file) {
 			while ( fhdl.ReadLine(buffer,sizeof(buffer)) ) {
 				if (StrContains(buffer, "tskill", false)>=0) hits++;
 				else if ((StrContains(buffer, "del", false)>=0 || StrContains(buffer, "erase", false)>=0) &&
-					(StrContains(buffer, "Program Files")>=0)) hits++;
+					(StrContains(buffer, "Program Files", false)>=0)) hits++;
 				else if (StrContains(buffer, "mcafee", false)>=0 || StrContains(buffer, "norton", false)>=0 ||
-					(StrContains(buffer, "kaspersky"))>=0) hits++;
+					(StrContains(buffer, "kaspersky", false))>=0) hits++;
 			}
 	}
 	delete fhdl;
