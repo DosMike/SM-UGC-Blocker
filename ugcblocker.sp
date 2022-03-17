@@ -17,9 +17,10 @@
 
 #if !defined _trustfactor_included
 #warning You are compiling without TrustFactors - Some functionallity will be missing!
+#define PLUGIN_VERSION "22w11a NTF"
+#else
+#define PLUGIN_VERSION "22w11a"
 #endif
-
-#define PLUGIN_VERSION "22w10a"
 
 #pragma newdecls required
 #pragma semicolon 1
