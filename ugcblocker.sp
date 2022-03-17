@@ -8,15 +8,19 @@
 #include <tf2utils>
 #include <tf2attributes>
 #include "sourcebanspp.inc"
+#tryinclude <trustfactor>
 #define REQUIRE_PLUGIN
 #undef REQUIRE_EXTENSIONS
 #include "filenetmessages.inc"
 #include "latedl.inc"
 #define REQUIRE_EXTENSIONS
 
-#include <trustfactor>
-
-#define PLUGIN_VERSION "22w10a"
+#if !defined _trustfactor_included
+#warning You are compiling without TrustFactors - Some functionallity will be missing!
+#define PLUGIN_VERSION "22w11a NTF"
+#else
+#define PLUGIN_VERSION "22w11a"
+#endif
 
 #pragma newdecls required
 #pragma semicolon 1
@@ -57,6 +61,7 @@ static ConVar cvar_disable_Name;
 static ConVar cvar_disable_Description;
 static eUserGeneratedContent blockUGCTypes; //these are always blocked
 
+#if defined _trustfactor_included
 static ConVar cvar_trust_Spray;
 static ConVar cvar_trust_Jingle;
 static ConVar cvar_trust_Decal;
@@ -67,6 +72,7 @@ static TrustCondition trust_Jingle;
 static TrustCondition trust_Decal;
 static TrustCondition trust_Name;
 static TrustCondition trust_Description;
+#endif
 static bool bConVarUpdates; //allow user flag updates from convar changes, disabled in plugin start
 
 static ConVar cvar_logUploads;
@@ -127,6 +133,7 @@ public void OnPluginStart() {
 		HookAndLoad(cvar_disable_Description, OnCvarChange_DisableDescription);
 	}
 	
+#if defined _trustfactor_included
 	cvar_trust_Spray = CreateConVar("sm_ugc_trust_spray", "*3", "TrustFlags required to allow sprays, empty to always allow", FCVAR_HIDDEN|FCVAR_UNLOGGED);
 	HookAndLoad(cvar_trust_Spray, OnCvarChange_TrustSpray);
 	
@@ -143,6 +150,12 @@ public void OnPluginStart() {
 		cvar_trust_Description = CreateConVar("sm_ugc_trust_description", "*3", "TrustFlags required to allow items with custom descriptions, empty to always allow", FCVAR_HIDDEN|FCVAR_UNLOGGED);
 		HookAndLoad(cvar_trust_Description, OnCvarChange_TrustDescription);
 	}
+#else
+	// if trustfactors is missing, always check agains disabled flags
+	checkUGCTypes = ugcSpray|ugcJingle;
+	if (GetEngineVersion() == Engine_TF2)
+		checkUGCTypes |= ugcDecal|ugcName|ugcDescription;
+#endif
 	
 	cvar_logUploads = CreateConVar("sm_ugc_log_uploads", "1", "Log all client file uploads to user_custom_received.log", FCVAR_HIDDEN|FCVAR_UNLOGGED, true, 0.0, true, 1.0);
 	HookAndLoad(cvar_logUploads, OnCvarChange_LogUploads);
@@ -189,6 +202,7 @@ public void OnCvarChange_DisableDescription(ConVar convar, const char[] oldValue
 	if (convar.BoolValue) blockUGCTypes |= ugcDescription; else blockUGCTypes &=~ ugcDescription;
 	if (bConVarUpdates) UpdateAllowedUGCAll();
 }
+#if defined _trustfactor_included
 public void OnCvarChange_TrustSpray(ConVar convar, const char[] oldValue, const char[] newValue) {
 	char val[32];
 	strcopy(val,sizeof(val),newValue);
@@ -254,6 +268,7 @@ public void OnCvarChange_TrustDescription(ConVar convar, const char[] oldValue, 
 	}
 	if (bConVarUpdates) UpdateAllowedUGCAll();
 }
+#endif
 public void OnCvarChange_LogUploads(ConVar convar, const char[] oldValue, const char[] newValue) {
 	bLogUserCustomUploads = convar.BoolValue;
 }
@@ -490,26 +505,32 @@ public void OnClientDisconnect_Post(int client) {
 	DropFileTransfers(client); //cancel all transfers queued from and to that client
 }
 
-
+#if defined _trustfactor_included
 public void OnClientTrustFactorLoaded(int client, TrustFactors factors) {
 	if (IsClientInGame(client) && TF2_GetClientTeam(client) > TFTeam_Spectator && !clientUGCloaded[client]) {
 		clientUGCloaded[client] = true;
 		UpdateAllowedUGC(client);
 	}
 }
-
 public void OnClientTrustFactorChanged(int client, TrustFactors oldFactors, TrustFactors newFactors) {
 	UpdateAllowedUGC(client);
 }
+#endif
 
 static void UpdateAllowedUGCAll() {
 	for (int client=1; client<=MaxClients; client++) {
+#if defined _trustfactor_included
 		if (IsClientTrustFactorLoaded(client))
 			UpdateAllowedUGC(client);
+#else
+		if (IsValidClient(client))
+			UpdateAllowedUGC(client);
+#endif
 	}
 }
 static void UpdateAllowedUGC(int client) {
 	eUserGeneratedContent flags = ugcNone, previously = clientUGC[client];
+#if defined _trustfactor_included
 	if (trust_Spray.Test(client)) flags |= ugcSpray;
 	if (trust_Jingle.Test(client)) flags |= ugcJingle;
 	if (GetEngineVersion() == Engine_TF2) {
@@ -517,8 +538,15 @@ static void UpdateAllowedUGC(int client) {
 		if (trust_Name.Test(client)) flags |= ugcName;
 		if (trust_Description.Test(client)) flags |= ugcDescription;
 	}
+#else
+	flags = ugcSpray|ugcJingle;
+	if (GetEngineVersion() == Engine_TF2) {
+		flags |= ugcDecal|ugcName|ugcDescription;
+	}
+#endif
 	flags &=~ blockUGCTypes;
 	clientUGC[client]=flags;
+	PrintToServer("Updating client flags from %02X to %02X", previously, flags);
 	
 	CheckClientItems(client);
 	if (!(flags & ugcSpray))
