@@ -547,7 +547,6 @@ static void UpdateAllowedUGC(int client) {
 #endif
 	flags &=~ blockUGCTypes;
 	clientUGC[client]=flags;
-	PrintToServer("Updating client flags from %02X to %02X", previously, flags);
 	
 	CheckClientItems(client);
 	if (!(flags & ugcSpray))
