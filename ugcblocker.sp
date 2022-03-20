@@ -17,9 +17,9 @@
 
 #if !defined _trustfactor_included
 #warning You are compiling without TrustFactors - Some functionallity will be missing!
-#define PLUGIN_VERSION "22w11a NTF"
+#define PLUGIN_VERSION "22w11b NTF"
 #else
-#define PLUGIN_VERSION "22w11a"
+#define PLUGIN_VERSION "22w11b"
 #endif
 
 #pragma newdecls required
@@ -457,6 +457,7 @@ void QueueFileTransfer(int to, int from, eUserGeneratedContent type) {
 	fileRequestQueue.PushArray(queue);
 }
 void DropFileTransfers(int client, bool target=true) {
+	if (!IsClientConnected(client)) return;
 	int user=GetClientUserId(client);
 	int index;
 	if (target) {
@@ -500,7 +501,7 @@ public void OnClientPutInServer(int client) {
 		Format(clientJingleFile[client], sizeof(clientJingleFile[]), "user_custom/%c%c/%s.dat", buffer[0], buffer[1], buffer);
 	}
 }
-public void OnClientDisconnect_Post(int client) {
+public void OnClientDisconnect(int client) {
 	OnClientConnected(client); //cleanup is the same
 	DropFileTransfers(client); //cancel all transfers queued from and to that client
 }
@@ -546,7 +547,6 @@ static void UpdateAllowedUGC(int client) {
 #endif
 	flags &=~ blockUGCTypes;
 	clientUGC[client]=flags;
-	PrintToServer("Updating client flags from %02X to %02X", previously, flags);
 	
 	CheckClientItems(client);
 	if (!(flags & ugcSpray))
