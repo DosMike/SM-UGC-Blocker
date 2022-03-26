@@ -52,7 +52,8 @@ Log all client file uploads to `user_custom_received.log`
 `sm_ugc_scan_uploads "1"`   
 Performa a scan for Trojan:BAT/Killav.B in sprays and jingles.   
 If a file scans positive, all admins with the kick flag will be notified and the player will be banned (using sourcebans++ if applicable).   
-**Please validate the file & ban manually as the automated process might not work 100%.**
+**Please validate the file & ban manually as the automated process might not work 100%.**   
+[Spray Exploit Fixer](https://forums.alliedmods.net/showthread.php?t=323447) catches this as well and probably better, I recommend you turn sm_ugc_scan_uploads off if you use that plugin.
 
 Items that do not pass the filters will currently just be removed from the player.   
 In case of weapons i might look into using TF2 Gimme or TF2 Items to generate and re-equip "clean" versions.
