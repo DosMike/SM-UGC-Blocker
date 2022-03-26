@@ -17,9 +17,9 @@
 
 #if !defined _trustfactor_included
 #warning You are compiling without TrustFactors - Some functionallity will be missing!
-#define PLUGIN_VERSION "22w11b NTF"
+#define PLUGIN_VERSION "22w12a NTF"
 #else
-#define PLUGIN_VERSION "22w11b"
+#define PLUGIN_VERSION "22w12a"
 #endif
 
 #pragma newdecls required
@@ -53,6 +53,7 @@ static char clientSprayFile[MAXPLAYERS+1][128];
 static char clientJingleFile[MAXPLAYERS+1][128];
 static ArrayList fileRequestQueue; //flagging files as not transmitted
 static ArrayList fileUploadScanQueue; //files that were just uploaded and need to be scanned
+static bool clientNotifiedGrants[MAXPLAYERS+1]; //did we tell the player what they can do?
 
 static ConVar cvar_disable_Spray;
 static ConVar cvar_disable_Jingle;
@@ -180,7 +181,15 @@ public void OnPluginStart() {
 	RegAdminCmd("sm_ugclookuplogs", Command_LookupFile, ADMFLAG_KICK, "Usage: sm_ugclookuplogs <name|steamid|filename> - Lookup ugc filenames <-> SteamIDs. Scan log files directly");
 	
 	RegAdminCmd("sm_ugcscanusercustom", Command_ScanUserCustom, ADMFLAG_ROOT, "Usage: sm_ugcscanusercustom - Scan all user_custom files");
+	AddCommandListener(Command_Say, "say");
+	AddCommandListener(Command_Say, "say_team");
 }
+
+public void OnPluginEnd() {
+	delete fileRequestQueue;
+	delete fileUploadScanQueue;
+}
+
 
 public void OnCvarChange_DisableSpray(ConVar convar, const char[] oldValue, const char[] newValue) {
 	if (convar.BoolValue) blockUGCTypes |= ugcSpray; else blockUGCTypes &=~ ugcSpray;
@@ -222,10 +231,10 @@ public void OnCvarChange_TrustJingle(ConVar convar, const char[] oldValue, const
 	TrimString(val);
 	if (val[0]==0) {
 		checkUGCTypes &=~ ugcJingle;
-		trust_Spray.Always();
+		trust_Jingle.Always();
 	} else {
 		checkUGCTypes |= ugcJingle;
-		trust_Spray.Parse(val);
+		trust_Jingle.Parse(val);
 	}
 	if (bConVarUpdates) UpdateAllowedUGCAll();
 }
@@ -322,11 +331,13 @@ public Action Command_LookupFile(int client, int args) {
 		char name[4];
 		bool tnisml;
 		int hits = ProcessTargetString(target, client, results, 1, COMMAND_FILTER_NO_MULTI|COMMAND_FILTER_NO_IMMUNITY|COMMAND_FILTER_NO_BOTS, name, 0, tnisml);
-		if (hits < 0) { //dont want a message on hits==0
+		if (hits == COMMAND_TARGET_NOT_IN_GAME || hits == COMMAND_TARGET_NOT_HUMAN) {
+			//we really can't work with those
 			ReplyToTargetError(client, hits);
 		} else if (hits > 0) {
+			//we have an online player
 			online = results[0];
-		}
+		}// else try the logs
 	}
 	if (!forcedLogs && online > 0) {
 		ReplyToCommand(client, "[UGC] Player '%L'", online);
@@ -378,6 +389,7 @@ public Action Command_LookupFile(int client, int args) {
 					SetCmdReplySource(SM_REPLY_TO_CHAT);
 				}
 			}
+			delete hits;
 		}
 	}
 	return Plugin_Handled;
@@ -411,6 +423,128 @@ public Action Command_ScanUserCustom(int client, int args) {
 	ReplyToCommand(client, "> Files marked Trojan:BAT/Killav.B : %3i %6.2f%%", trojanbatkillavb, trojanbatkillavb*100.0/scanned);
 //	SetCmdReplySource(rs);
 }
+public Action Command_Say(int client, const char[] command, int argc) {
+	char message[128];
+	GetCmdArgString(message, sizeof(message));
+	if (!( (StrContains(message, "why can", false)>=0 || StrContains(message, "when can", false)>=0) && 
+			(StrContains(message, " i ", false)>=0)) ) {//also allows for can't
+		PrintToServer("Chat not directed at UGC");
+		return Plugin_Continue; //not directed to us
+	}
+	
+	if (StrContains(message, "spray", false)>=0) {
+		if (blockUGCTypes & ugcSpray) 
+			PrintToChat(client, "> Sprays are DISABLED");
+		else if (trust_Spray.required || trust_Spray.optional)
+			PrintTrustConditionReadable(client, trust_Spray, "> Sprays need ");
+		else
+			PrintToChat(client, "> Sprays are ALLOWED");
+	}
+	if (StrContains(message, "jingle", false)>=0) {
+		if (blockUGCTypes & ugcJingle) 
+			PrintToChat(client, "> Jingles are DISABLED");
+		else if (trust_Jingle.required || trust_Jingle.optional)
+			PrintTrustConditionReadable(client, trust_Jingle, "> Jingles need ");
+		else
+			PrintToChat(client, "> Jingles are ALLOWED");
+	}
+	if (GetEngineVersion() == Engine_TF2) {
+		if (StrContains(message, "decal", false)>=0) {
+			if (blockUGCTypes & ugcDecal) 
+				PrintToChat(client, "> Decals are DISABLED");
+			else if (trust_Decal.required || trust_Decal.optional)
+				PrintTrustConditionReadable(client, trust_Decal, "> Decals need ");
+			else
+				PrintToChat(client, "> Decals are ALLOWED");
+		}
+		if (StrContains(message, "name", false)>=0) {
+			if (blockUGCTypes & ugcName) 
+				PrintToChat(client, "> Naming Items is DISABLED");
+			else if (trust_Name.required || trust_Name.optional)
+				PrintTrustConditionReadable(client, trust_Name, "> NameTags need ");
+			else
+				PrintToChat(client, "> Named Items are ALLOWED");
+		}
+		if (StrContains(message, "desc", false)>=0) {
+			if (blockUGCTypes & ugcDescription) 
+				PrintToChat(client, "> Item Descriptions are DISABLED");
+			else if (trust_Description.required || trust_Description.optional)
+				PrintTrustConditionReadable(client, trust_Description, "> Descriptions need ");
+			else
+				PrintToChat(client, "> Descriptions are ALLOWED");
+		}
+	}
+	return Plugin_Continue;
+}
+static void PrintTrustConditionReadable(int client, TrustCondition condition, const char[] prefix) {
+	TrustFactors trust = GetClientTrustFactors(client);
+	TrustFactors missing = (condition.required|condition.optional) &~ trust;
+	int optionalGranted;
+	for (int bits = view_as<int>(trust & condition.optional); bits; bits >>= 1) if (bits&1) optionalGranted++;
+	char buffer[512];
+	char word[32];
+	if (condition.required) {
+		bool wasGreen, wantGreen;
+		for (TrustFactors f = TrustPlaytime; f <= TrustNotEconomyBanned; f <<= view_as<TrustFactors>(1)) {
+			if (condition.required & f) {
+				//save bytes in message by keepin track of this
+				wantGreen = !(missing&f);
+				if (wasGreen!=wantGreen) {
+					if (wantGreen) StrCat(buffer, sizeof(buffer), "\x04");
+					else StrCat(buffer, sizeof(buffer), "\x04");
+					wasGreen=wantGreen;
+				}
+				//append name
+				GetTrustFactorName(f, word, sizeof(word));
+				Format(buffer, sizeof(buffer), "%s%s, ", buffer, word);
+			}
+		}
+		//remove last comma
+		buffer[strlen(buffer)-2]=0;
+		//optional concat
+		if (condition.optionalCount) {
+			Format(buffer, sizeof(buffer), "%s\x01 and ", buffer);
+		}
+	}
+	if (condition.optionalCount) {
+		bool wasGreen, wantGreen;
+		Format(buffer, sizeof(buffer), "%s%i of ", buffer, condition.optionalCount);
+		for (TrustFactors f = TrustPlaytime; f <= TrustNotEconomyBanned; f <<= view_as<TrustFactors>(1)) {
+			if (condition.optional & f) {
+				//save bytes in message by keepin track of this
+				wantGreen = !(missing&f);
+				if (wasGreen!=wantGreen) {
+					if (wantGreen) StrCat(buffer, sizeof(buffer), "\x04");
+					else StrCat(buffer, sizeof(buffer), "\x04");
+					wasGreen=wantGreen;
+				}
+				//append name
+				GetTrustFactorName(f, word, sizeof(word));
+				Format(buffer, sizeof(buffer), "%s%c%s, ", buffer, (missing&f)?1:4,word);
+			}
+		}
+	}
+	//remove last comma
+	buffer[strlen(buffer)-2]=0;
+	PrintToChat(client, "\x01%s%s", prefix, buffer);
+}
+static void GetTrustFactorName(TrustFactors factor, char[] namebuf, int size) {
+	switch(factor) {
+		case TrustPlaytime: strcopy(namebuf, size, "Playtime");
+		case TrustPremium: strcopy(namebuf, size, "Not F2P");
+		case TrustDonorFlag: strcopy(namebuf, size, "Donator");
+		case TrustCProfilePublic: strcopy(namebuf, size, "Public Profile");
+		case TrustCProfileSetup: strcopy(namebuf, size, "Setup Profile");
+		case TrustCProfileLevel: strcopy(namebuf, size, "Steam Level");
+		case TrustCProfileGametime: strcopy(namebuf, size, "Total Gametime");
+		case TrustCProfileAge: strcopy(namebuf, size, "Old Account");
+		case TrustCProfilePoCBadge: strcopy(namebuf, size, "Community Badge");
+		case TrustNoVACBans: strcopy(namebuf, size, "No VAC Ban");
+		case TrustNotEconomyBanned: strcopy(namebuf, size, "No Trade Ban");
+//		case TrustSBPPGameBan: strcopy(namebuf, size, "No SB Ban");
+//		case TrustSBPPCommBan: strcopy(namebuf, size, "No SB CommBan");
+	}
+}
 
 public void OnMapStart() {
 	if (bLogUserCustomUploads) {
@@ -440,8 +574,10 @@ public Action OnFileSend(int client, const char[] file) {
 		//block sending - unknown owner?
 		return Plugin_Handled;
 	} else if (owner > 0 && (checkUGCTypes&type) && !(clientUGC[owner]&type)) {
-		if ((depFNM||depLateDL) && !clientUGCloaded && type != ugcNone) {
-			//push file download later
+		//we know the owner, check this type and the owner has that type not granted
+		if ((depFNM||depLateDL) && !clientUGCloaded[owner] && type != ugcNone) {
+			//we have late download, wait for tf response and know the type
+			//...push file download later
 			QueueFileTransfer(client, owner, type);
 		}
 		//block sending - not allowed (yet)
@@ -488,6 +624,7 @@ void PushFilesFrom(int client, eUserGeneratedContent type) {
 
 public void OnClientConnected(int client) {
 	clientUGCloaded[client] = false;
+	clientNotifiedGrants[client] = false;
 	clientUGC[client] = ugcNone;
 	clientSprayFile[client][0]=0;
 	clientJingleFile[client][0]=0;
@@ -508,10 +645,8 @@ public void OnClientDisconnect(int client) {
 
 #if defined _trustfactor_included
 public void OnClientTrustFactorLoaded(int client, TrustFactors factors) {
-	if (IsClientInGame(client) && TF2_GetClientTeam(client) > TFTeam_Spectator && !clientUGCloaded[client]) {
-		clientUGCloaded[client] = true;
-		UpdateAllowedUGC(client);
-	}
+	clientUGCloaded[client] = true;
+	UpdateAllowedUGC(client);
 }
 public void OnClientTrustFactorChanged(int client, TrustFactors oldFactors, TrustFactors newFactors) {
 	UpdateAllowedUGC(client);
@@ -548,14 +683,16 @@ static void UpdateAllowedUGC(int client) {
 	flags &=~ blockUGCTypes;
 	clientUGC[client]=flags;
 	
-	CheckClientItems(client);
-	if (!(flags & ugcSpray))
-		KillSpray(client);
+	//this update below only if call is late
+	if (IsClientInGame(client) && GetClientTeam(client) > 1) {
+		CheckClientItems(client);
+		if (!(flags & ugcSpray))
+			KillSpray(client);
+	}
 	
 	if (flags != previously) {
-		char buffer[72];
-		UGCFlagString(flags, buffer, sizeof(buffer));
-		PrintToChat(client, "[SM] You are allowed to use %s", buffer);
+		clientNotifiedGrants[client]=false;
+		NotifyClientGrants(client);
 		
 		//find flags that turned on, mask with spray and jingle
 		if (depFNM||depLateDL) {
@@ -565,13 +702,23 @@ static void UpdateAllowedUGC(int client) {
 	}
 }
 
+static void NotifyClientGrants(int client) {
+	if (clientNotifiedGrants[client]) return; //already notified
+	if (!IsClientInGame(client)) return; //not yet available to be notified
+	clientNotifiedGrants[client]=true;
+	
+	char buffer[72];
+	UGCFlagString(clientUGC[client], buffer, sizeof(buffer));
+	PrintToChat(client, "[SM] You are allowed to use %s", buffer);
+	PrintToChat(client, "[SM] Use /checkmystuff for details", buffer);
+}
+
 public void OnEvent_ClientInventoryRegeneratePost(Event event, const char[] name, bool dontBroadcast) {
 	int client = GetClientOfUserId(event.GetInt("userid", 0));
 	if (!IsClientInGame(client) || !IsPlayerAlive(client) || TF2_GetClientTeam(client)<=TFTeam_Spectator || IsFakeClient(client)) return;
-	if (!clientUGCloaded[client]) {
-		clientUGCloaded[client]=true;
+	if (clientUGCloaded[client])
 		UpdateAllowedUGC(client);
-	}
+	NotifyClientGrants(client);
 	CheckClientItems(client);
 }
 public void OnEntityCreated(int entity, const char[] classname){
@@ -580,10 +727,9 @@ public void OnEntityCreated(int entity, const char[] classname){
 }
 public void OnClientSpawnPost(int client) {
 	if (!IsClientInGame(client) || !IsPlayerAlive(client) || GetClientTeam(client)<=1 || IsFakeClient(client)) return;
-	if (!clientUGCloaded[client]) {
-		clientUGCloaded[client]=true;
+	if (clientUGCloaded[client]) 
 		UpdateAllowedUGC(client);
-	}
+	NotifyClientGrants(client);
 }
 
 void CheckClientItems(int client) {
@@ -598,6 +744,7 @@ void CheckClientItems(int client) {
 			flags = UGCCheckItem(weapon) & ~clientUGC[client];
 			if (flags == ugcDecal) {
 				RemoveItemDecal(weapon);
+				TF2Econ_TranslateLoadoutSlotIndexToName(slot, slotName, sizeof(slotName));
 				PrintToChat(client, "[SM] The decal was removed from your %s", slotName);
 			} else if (flags) {
 				TF2_RemoveWeaponSlot(client, slot);
@@ -620,9 +767,10 @@ void CheckClientItems(int client) {
 	}
 	if (!blocked.Empty) {
 		UGCFlagString(flags2, buffer, sizeof(buffer));
-		PrintToChat(client, "[SM] One or more cosmetics were blocked for their %s", slotName, buffer);
+		PrintToChat(client, "[SM] One or more cosmetics were blocked for their %s", buffer);
 		while (!blocked.Empty) TF2_RemoveWearable(client, blocked.Pop());
 	}
+	delete blocked;
 }
 static eUserGeneratedContent UGCCheckItem(int entity) {
 	eUserGeneratedContent ugc = ugcNone;
@@ -789,7 +937,7 @@ public Action FileScanTimer(Handle timer) {
 				}
 			}
 			fileUploadScanQueue.Erase(index);
-		} else if (entry.ttl == 0) {
+		} else if (entry.ttl <= 0) {
 			fileUploadScanQueue.Erase(index);
 		} else {
 			entry.ttl -= 1;
