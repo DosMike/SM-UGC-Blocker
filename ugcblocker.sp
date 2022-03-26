@@ -435,16 +435,20 @@ public Action Command_Say(int client, const char[] command, int argc) {
 	if (StrContains(message, "spray", false)>=0) {
 		if (blockUGCTypes & ugcSpray) 
 			PrintToChat(client, "> Sprays are DISABLED");
+#if defined _trustfactor_included
 		else if (trust_Spray.required || trust_Spray.optional)
 			PrintTrustConditionReadable(client, trust_Spray, "> Sprays need ");
+#endif
 		else
 			PrintToChat(client, "> Sprays are ALLOWED");
 	}
 	if (StrContains(message, "jingle", false)>=0) {
 		if (blockUGCTypes & ugcJingle) 
 			PrintToChat(client, "> Jingles are DISABLED");
+#if defined _trustfactor_included
 		else if (trust_Jingle.required || trust_Jingle.optional)
 			PrintTrustConditionReadable(client, trust_Jingle, "> Jingles need ");
+#endif
 		else
 			PrintToChat(client, "> Jingles are ALLOWED");
 	}
@@ -452,30 +456,37 @@ public Action Command_Say(int client, const char[] command, int argc) {
 		if (StrContains(message, "decal", false)>=0) {
 			if (blockUGCTypes & ugcDecal) 
 				PrintToChat(client, "> Decals are DISABLED");
+#if defined _trustfactor_included
 			else if (trust_Decal.required || trust_Decal.optional)
 				PrintTrustConditionReadable(client, trust_Decal, "> Decals need ");
+#endif
 			else
 				PrintToChat(client, "> Decals are ALLOWED");
 		}
 		if (StrContains(message, "name", false)>=0) {
 			if (blockUGCTypes & ugcName) 
 				PrintToChat(client, "> Naming Items is DISABLED");
+#if defined _trustfactor_included
 			else if (trust_Name.required || trust_Name.optional)
 				PrintTrustConditionReadable(client, trust_Name, "> NameTags need ");
+#endif
 			else
 				PrintToChat(client, "> Named Items are ALLOWED");
 		}
 		if (StrContains(message, "desc", false)>=0) {
 			if (blockUGCTypes & ugcDescription) 
 				PrintToChat(client, "> Item Descriptions are DISABLED");
+#if defined _trustfactor_included
 			else if (trust_Description.required || trust_Description.optional)
 				PrintTrustConditionReadable(client, trust_Description, "> Descriptions need ");
+#endif
 			else
 				PrintToChat(client, "> Descriptions are ALLOWED");
 		}
 	}
 	return Plugin_Continue;
 }
+#if defined _trustfactor_included
 static void PrintTrustConditionReadable(int client, TrustCondition condition, const char[] prefix) {
 	TrustFactors trust = GetClientTrustFactors(client);
 	TrustFactors missing = (condition.required|condition.optional) &~ trust;
@@ -545,6 +556,7 @@ static void GetTrustFactorName(TrustFactors factor, char[] namebuf, int size) {
 //		case TrustSBPPCommBan: strcopy(namebuf, size, "No SB CommBan");
 	}
 }
+#endif
 
 public void OnMapStart() {
 	if (bLogUserCustomUploads) {
