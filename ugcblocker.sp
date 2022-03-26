@@ -17,9 +17,9 @@
 
 #if !defined _trustfactor_included
 #warning You are compiling without TrustFactors - Some functionallity will be missing!
-#define PLUGIN_VERSION "22w12a NTF"
+#define PLUGIN_VERSION "22w12b NTF"
 #else
-#define PLUGIN_VERSION "22w12a"
+#define PLUGIN_VERSION "22w12b"
 #endif
 
 #pragma newdecls required
@@ -722,7 +722,6 @@ static void NotifyClientGrants(int client) {
 	char buffer[72];
 	UGCFlagString(clientUGC[client], buffer, sizeof(buffer));
 	PrintToChat(client, "[SM] You are allowed to use %s", buffer);
-	PrintToChat(client, "[SM] Use /checkmystuff for details", buffer);
 }
 
 public void OnEvent_ClientInventoryRegeneratePost(Event event, const char[] name, bool dontBroadcast) {
