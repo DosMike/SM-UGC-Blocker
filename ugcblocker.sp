@@ -17,9 +17,9 @@
 
 #if !defined _trustfactor_included
 #warning You are compiling without TrustFactors - Some functionallity will be missing!
-#define PLUGIN_VERSION "22w12b NTF"
+#define PLUGIN_VERSION "22w13a NTF"
 #else
-#define PLUGIN_VERSION "22w12b"
+#define PLUGIN_VERSION "22w13a"
 #endif
 
 #pragma newdecls required
@@ -428,7 +428,6 @@ public Action Command_Say(int client, const char[] command, int argc) {
 	GetCmdArgString(message, sizeof(message));
 	if (!( (StrContains(message, "why can", false)>=0 || StrContains(message, "when can", false)>=0) && 
 			(StrContains(message, " i ", false)>=0)) ) {//also allows for can't
-		PrintToServer("Chat not directed at UGC");
 		return Plugin_Continue; //not directed to us
 	}
 	
