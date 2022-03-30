@@ -426,8 +426,8 @@ public Action Command_ScanUserCustom(int client, int args) {
 public Action Command_Say(int client, const char[] command, int argc) {
 	char message[128];
 	GetCmdArgString(message, sizeof(message));
-	if (!( (StrContains(message, "why can", false)>=0 || StrContains(message, "when can", false)>=0) && 
-			(StrContains(message, " i ", false)>=0)) ) {//also allows for can't
+	if (!( (StrContains(message, "why can", false)>=0 || StrContains(message, "when can", false)>=0 || StrContains(message, "blocked", false)>=0 || StrContains(message, "not allowed", false)>=0) && 
+			(StrContains(message, " i ", false)>=0) || StrContains(message, " my ", false)>=0)) ) {// can also allows for can't
 		return Plugin_Continue; //not directed to us
 	}
 	
@@ -790,8 +790,8 @@ static eUserGeneratedContent UGCCheckItem(int entity) {
 	char classname[64];
 	GetEntityClassname(entity, classname, sizeof(classname));
 	
-	int aidx[16];
-	any aval[16];
+	int aidx[32];
+	any aval[32];
 	int acnt = TF2Attrib_GetSOCAttribs(entity, aidx, aval);
 	for (int i;i<acnt;i++) switch(aidx[i]) {
 		case 152: if (aval[i]) ugc |= ugcDecal;
