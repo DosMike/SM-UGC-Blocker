@@ -25,6 +25,8 @@
 #pragma newdecls required
 #pragma semicolon 1
 
+#define UGC_LOGFILE "user_generated_content.log"
+
 enum eUserGeneratedContent (<<=1) {
 	ugcNone=0,
 	ugcSpray=1,
@@ -72,6 +74,9 @@ static bool bConVarUpdates; //allow user flag updates from convar changes, disab
 
 static ConVar cvar_logUploads;
 static bool bLogUserCustomUploads;
+//this is used to reduce the amount of log entries, but because i can't waste arbitrary amounts of memory
+//i will clear this map every map. entries are "accountidhex_customtexturehex" -> 1 (so used as hash set)
+static StringMap accountCustomTextures;
 
 static bool depFNM;
 static bool depLateDL;
@@ -156,6 +161,7 @@ public void OnPluginStart() {
 	bConVarUpdates=true;
 	
 	fileRequestQueue = new ArrayList(sizeof(FileRequestData));
+	accountCustomTextures = new StringMap();
 	
 	AddTempEntHook("Player Decal", OnTempEnt_PlayerDecal);
 	if (GetEngineVersion() == Engine_TF2) {
@@ -323,29 +329,41 @@ public Action Command_LookupFile(int client, int args) {
 		UGCFlagString(clientUGC[online], target, sizeof(target));
 		ReplyToCommand(client, "[UGC] Has permission to %s", target);
 	} else {
-		File log = OpenFile("user_custom_received.log", "rt");
+		File log = OpenFile(UGC_LOGFILE, "rt");
 		if (log == INVALID_HANDLE) {
 			ReplyToCommand(client, "[UGC] Logs not found");
 		} else {
-			Regex entry = new Regex("^L ([\\w\\/]+ - [0-9:]+): Received user_custom(.*) from (.*)<[0-9]+><(.*)><(?:Console)?>$", PCRE_UTF8|PCRE_CASELESS);
+			Regex entryUpload = new Regex("^L ([\\w\\/]+ - [0-9:]+): Received user_custom(.*) from (.*)<[0-9]+><(.*)><(?:Console)?>$", PCRE_UTF8|PCRE_CASELESS);
+			Regex entrySteam = new Regex("^L ([\\w\\/]+ - [0-9:]+): Custom Texture (\\w+) on ItemDef [0-9]+ \\(\\w+\\) from (.*)<[0-9]+><(.*)><(?:Console)?>$", PCRE_UTF8|PCRE_CASELESS);
 			char line[256];
 			char matchTime[32], matchFile[32], matchName[64], matchSteamID[64];
 			ArrayList hits = new ArrayList(ByteCountToCells(256));
 			while (log.ReadLine(line, sizeof(line))) {
-				if (entry.Match(line)>0) {
-					entry.GetSubString(1, matchTime, sizeof(matchTime));
-					entry.GetSubString(2, matchFile, sizeof(matchFile));
-					entry.GetSubString(3, matchName, sizeof(matchName));
-					entry.GetSubString(4, matchSteamID, sizeof(matchSteamID));
+				if (entryUpload.Match(line)>0) {
+					entryUpload.GetSubString(1, matchTime, sizeof(matchTime));
+					entryUpload.GetSubString(2, matchFile, sizeof(matchFile));
+					entryUpload.GetSubString(3, matchName, sizeof(matchName));
+					entryUpload.GetSubString(4, matchSteamID, sizeof(matchSteamID));
 					
 					if (StrContains(matchSteamID, target, false)>=0 || StrContains(matchName, target, false)>=0 || StrContains(matchFile, target, false)>=0) {
 						Format(line, sizeof(line), " %s  %s<%s>  at %s", matchFile, matchName, matchSteamID, matchTime);
 						hits.PushString(line);
 					}
+				} else if (entrySteam.Match(line)>0) {
+					entrySteam.GetSubString(1, matchTime, sizeof(matchTime));
+					entrySteam.GetSubString(2, matchFile, sizeof(matchFile));
+					entrySteam.GetSubString(3, matchName, sizeof(matchName));
+					entrySteam.GetSubString(4, matchSteamID, sizeof(matchSteamID));
+					
+					if (StrContains(matchSteamID, target, false)>=0 || StrContains(matchName, target, false)>=0 || StrContains(matchFile, target, false)>=0) {
+						Format(line, sizeof(line), " UGCHandle %s  %s<%s>  at %s", matchFile, matchName, matchSteamID, matchTime);
+						hits.PushString(line);
+					}
 				}
 			}
 			delete log;
-			delete entry;
+			delete entryUpload;
+			delete entrySteam;
 			if (hits.Length==0) {
 				ReplyToCommand(client, "[UGC] No hits for target %s", target);
 			} else {
@@ -505,11 +523,7 @@ static void GetTrustFactorName(TrustFactors factor, char[] namebuf, int size) {
 #endif
 
 public void OnMapStart() {
-	if (bLogUserCustomUploads) {
-		char mapName[128];
-		GetCurrentMap(mapName, sizeof(mapName));
-		LogToFileEx("user_custom_received.log", "----- Map Changed To %s -----", mapName);
-	}
+	accountCustomTextures.Clear();
 }
 
 public Action OnFileReceive(int client, const char[] file) {
@@ -523,7 +537,7 @@ public Action OnFileReceive(int client, const char[] file) {
 	}
 	
 	if (bLogUserCustomUploads) {
-		LogToFileEx("user_custom_received.log", "Received %s from %L", file, client);
+		LogToFileEx(UGC_LOGFILE, "Received %s from %L", file, client);
 	}
 	return Plugin_Continue;
 }
@@ -700,7 +714,7 @@ void CheckClientItems(int client) {
 	for (int slot;slot<4;slot++) {
 		int weapon = TF2Util_GetPlayerLoadoutEntity(client, slot);
 		if (weapon != INVALID_ENT_REFERENCE) {
-			flags = UGCCheckItem(weapon) & ~clientUGC[client];
+			flags = UGCCheckItem(weapon,client) & ~clientUGC[client];
 			if (flags == ugcDecal) {
 				RemoveItemDecal(weapon);
 				TF2Econ_TranslateLoadoutSlotIndexToName(slot, slotName, sizeof(slotName));
@@ -718,7 +732,7 @@ void CheckClientItems(int client) {
 	ArrayStack blocked = new ArrayStack();
 	eUserGeneratedContent flags2;
 	for (int wno; wno < to; wno++) {
-		flags = UGCCheckItem(entity = TF2Util_GetPlayerWearable(client, wno)) & ~clientUGC[client];
+		flags = UGCCheckItem(entity = TF2Util_GetPlayerWearable(client, wno), client) & ~clientUGC[client];
 		if (flags) {
 			blocked.Push(entity);
 			flags2 |= flags;
@@ -731,7 +745,7 @@ void CheckClientItems(int client) {
 	}
 	delete blocked;
 }
-static eUserGeneratedContent UGCCheckItem(int entity) {
+static eUserGeneratedContent UGCCheckItem(int entity, int owner) {
 	eUserGeneratedContent ugc = ugcNone;
 	int item = GetItemDefinitionIndex(entity);
 	if (item < 0) return ugc;
@@ -739,14 +753,28 @@ static eUserGeneratedContent UGCCheckItem(int entity) {
 	char classname[64];
 	GetEntityClassname(entity, classname, sizeof(classname));
 	
+	int ugch, ugcl;
+	
 	int aidx[32];
 	any aval[32];
 	int acnt = TF2Attrib_GetSOCAttribs(entity, aidx, aval);
 	for (int i;i<acnt;i++) switch(aidx[i]) {
-		case 152: if (aval[i]) ugc |= ugcDecal;
-		case 227: if (aval[i]) ugc |= ugcDecal;
-		case 500: if (aval[i]) ugc |= ugcName;
-		case 501: if (aval[i]) ugc |= ugcDescription;
+		case 152: if ((ugcl=aval[i])!=0) ugc |= ugcDecal;
+		case 227: if ((ugch=aval[i])!=0) ugc |= ugcDecal;
+		case 500: if (aval[i]!=0) ugc |= ugcName;
+		case 501: if (aval[i]!=0) ugc |= ugcDescription;
+	}
+	
+	if (ugch || ugcl) {
+		char buffer[64];
+		GetClientAuthId(owner, AuthId_SteamID64, buffer, sizeof(buffer));
+		Format(buffer,sizeof(buffer),"%s_%08X%08X", buffer, ugch,ugcl);
+		int val;
+		if (!accountCustomTextures.GetValue(buffer,val)) {
+			accountCustomTextures.SetValue(buffer,1);
+			LogToFileEx(UGC_LOGFILE, "Custom Texture %08X%08X on ItemDef %i (%s) from %L", 
+				ugch,ugcl, GetItemDefinitionIndex(entity), classname, owner);
+		}
 	}
 	
 // requires nosoops experimental branch of tf2attributes, but would be able to check slurs 
