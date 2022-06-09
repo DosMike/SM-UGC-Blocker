@@ -568,10 +568,20 @@ public void OnMapStart() {
 }
 
 public Action OnFileReceive(int client, const char[] file) {
-	if (bLogUserCustomUploads) {
-		LogToFileEx("user_custom_received.log", "Received %s from %L", file, client);
-	}
 	if (bScanUserFiles && StrContains(file, "user_custom/")>=0) {
+		//loggin all receive calls introduces a bunch of false positives in reguards to
+		// player <-> spray relations, so w pre-filter a bit more
+		
+		//check if this file is owned by the client sending
+		eUserGeneratedContent type;
+		if (GetOwnerOfUserFile(file, type) != client || (type&(ugcSpray|ugcJingle))==ugcNone) {
+			return Plugin_Continue;
+		}
+		
+		if (bLogUserCustomUploads) {
+			LogToFileEx("user_custom_received.log", "Received %s from %L", file, client);
+		}
+		
 		char filename[128];
 		Format(filename, sizeof(filename), "download/%s", file);
 		AddFileForScanning(client, filename);
