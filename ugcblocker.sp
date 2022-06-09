@@ -39,12 +39,6 @@ enum struct FileRequestData {
 	int source;
 	eUserGeneratedContent sourceType;
 }
-enum struct FileUploadScan {
-	int userId;
-	int ttl;
-	char auth[32];
-	char file[PLATFORM_MAX_PATH];
-}
 
 static bool clientUGCloaded[MAXPLAYERS+1]; //did we load ugc flags?
 static eUserGeneratedContent clientUGC[MAXPLAYERS+1]; //green-light flags for trusted 
@@ -78,10 +72,7 @@ static bool bConVarUpdates; //allow user flag updates from convar changes, disab
 
 static ConVar cvar_logUploads;
 static bool bLogUserCustomUploads;
-static ConVar cvar_scanUserFiles;
-static bool bScanUserFiles;
 
-static bool depSBPP;
 static bool depFNM;
 static bool depLateDL;
 
@@ -161,14 +152,10 @@ public void OnPluginStart() {
 	cvar_logUploads = CreateConVar("sm_ugc_log_uploads", "1", "Log all client file uploads to user_custom_received.log", FCVAR_HIDDEN|FCVAR_UNLOGGED, true, 0.0, true, 1.0);
 	HookAndLoad(cvar_logUploads, OnCvarChange_LogUploads);
 	
-	cvar_scanUserFiles = CreateConVar("sm_ugc_scan_uploads", "1", "Scan user upload for suspicious content", FCVAR_HIDDEN|FCVAR_UNLOGGED, true, 0.0, true, 1.0);
-	HookAndLoad(cvar_scanUserFiles, OnCvarChange_ScanUserFiles);
-	
 	AutoExecConfig();
 	bConVarUpdates=true;
 	
 	fileRequestQueue = new ArrayList(sizeof(FileRequestData));
-	fileUploadScanQueue = new ArrayList(sizeof(FileUploadScan));
 	
 	AddTempEntHook("Player Decal", OnTempEnt_PlayerDecal);
 	if (GetEngineVersion() == Engine_TF2) {
@@ -180,7 +167,6 @@ public void OnPluginStart() {
 	RegAdminCmd("sm_ugclookup", Command_LookupFile, ADMFLAG_KICK, "Usage: sm_ugclookup <userid|name|steamid|filename> - Lookup ugc filenames <-> SteamIDs. Return online players if any match, scan though log otherwise");
 	RegAdminCmd("sm_ugclookuplogs", Command_LookupFile, ADMFLAG_KICK, "Usage: sm_ugclookuplogs <name|steamid|filename> - Lookup ugc filenames <-> SteamIDs. Scan log files directly");
 	
-	RegAdminCmd("sm_ugcscanusercustom", Command_ScanUserCustom, ADMFLAG_ROOT, "Usage: sm_ugcscanusercustom - Scan all user_custom files");
 	AddCommandListener(Command_Say, "say");
 	AddCommandListener(Command_Say, "say_team");
 }
@@ -281,27 +267,16 @@ public void OnCvarChange_TrustDescription(ConVar convar, const char[] oldValue, 
 public void OnCvarChange_LogUploads(ConVar convar, const char[] oldValue, const char[] newValue) {
 	bLogUserCustomUploads = convar.BoolValue;
 }
-public void OnCvarChange_ScanUserFiles(ConVar convar, const char[] oldValue, const char[] newValue) {
-	bScanUserFiles = convar.BoolValue;
-	if (!bScanUserFiles) {
-		fileUploadScanQueue.Clear();
-	}
-}
 
 public void OnAllPluginsLoaded() {
-	depSBPP = LibraryExists("sourcebans++");
 	depFNM = LibraryExists("filenetmessages");
 	depLateDL = LibraryExists("Late Downloads");
 }
 public void OnLibraryAdded(const char[] name) {
-	if (StrEqual(name, "sourcebans++")) depSBPP = true;
 	if (StrEqual(name, "filenetmessages")) depFNM = true;
 	if (StrEqual(name, "Late Downloads")) depLateDL = true;
 }
 public void OnLibraryRemoved(const char[] name) {
-	if (StrEqual(name, "sourcebans++")) {
-		depSBPP = false;
-	}
 	if (StrEqual(name, "filenetmessages")) {
 		depFNM = false;
 		fileRequestQueue.Clear();
@@ -394,40 +369,12 @@ public Action Command_LookupFile(int client, int args) {
 	}
 	return Plugin_Handled;
 }
-public Action Command_ScanUserCustom(int client, int args) {
-	DirectoryListing layer0 = OpenDirectory("download/user_custom"), layer1;
-	char subdir[32] = "download/user_custom/", filename[64];
-	FileType ftype; int scanned, trojanbatkillavb;
-//	ReplySource rs = GetCmdReplySource();
-//	if (rs != SM_REPLY_TO_CONSOLE) ReplyToCommand(client, "[UGC Blocker] Check console for output");
-//	SetCmdReplySource(SM_REPLY_TO_CONSOLE);
-	while (layer0.GetNext(subdir[21], sizeof(subdir)-21, ftype)) {
-		if (ftype != FileType_Directory || StrEqual(subdir[20],"/.") || StrEqual(subdir[20],"/..")) continue;
-		
-		layer1 = OpenDirectory(subdir);
-		while(layer1.GetNext(filename, sizeof(filename), ftype)){
-			if (ftype != FileType_File || StrEqual(filename, ".") || StrEqual(filename, "..")) continue;
-			Format(filename, sizeof(filename), "%s/%s", subdir, filename);
-			scanned+=1;
-			
-			int hits=QuickScanFileTojanBatKillavB(filename);
-			if (hits) {
-				ReplyToCommand(client, "[UGC Blocker] WARNING: Detected Trojan:BAT/Killav.B in %s with %i hits", filename, hits);
-				trojanbatkillavb+=1;
-			}
-		}
-		delete layer1;
-	}
-	delete layer0;
-	ReplyToCommand(client, "[UGC Blocker] Scanned %i files in /user_custom/", scanned);
-	ReplyToCommand(client, "> Files marked Trojan:BAT/Killav.B : %3i %6.2f%%", trojanbatkillavb, trojanbatkillavb*100.0/scanned);
-//	SetCmdReplySource(rs);
-}
+
 public Action Command_Say(int client, const char[] command, int argc) {
 	char message[128];
 	GetCmdArgString(message, sizeof(message));
 	if (!( (StrContains(message, "why can", false)>=0 || StrContains(message, "when can", false)>=0 || StrContains(message, "blocked", false)>=0 || StrContains(message, "not allowed", false)>=0) && 
-			(StrContains(message, " i ", false)>=0) || StrContains(message, " my ", false)>=0)) ) {// can also allows for can't
+			(StrContains(message, " i ", false)>=0 || StrContains(message, " my ", false)>=0) )) {// can also allows for can't
 		return Plugin_Continue; //not directed to us
 	}
 	
@@ -563,28 +510,20 @@ public void OnMapStart() {
 		GetCurrentMap(mapName, sizeof(mapName));
 		LogToFileEx("user_custom_received.log", "----- Map Changed To %s -----", mapName);
 	}
-	
-	CreateTimer(0.5, FileScanTimer, _, TIMER_REPEAT|TIMER_FLAG_NO_MAPCHANGE);
 }
 
 public Action OnFileReceive(int client, const char[] file) {
-	if (bScanUserFiles && StrContains(file, "user_custom/")>=0) {
-		//loggin all receive calls introduces a bunch of false positives in reguards to
-		// player <-> spray relations, so w pre-filter a bit more
-		
-		//check if this file is owned by the client sending
-		eUserGeneratedContent type;
-		if (GetOwnerOfUserFile(file, type) != client || (type&(ugcSpray|ugcJingle))==ugcNone) {
-			return Plugin_Continue;
-		}
-		
-		if (bLogUserCustomUploads) {
-			LogToFileEx("user_custom_received.log", "Received %s from %L", file, client);
-		}
-		
-		char filename[128];
-		Format(filename, sizeof(filename), "download/%s", file);
-		AddFileForScanning(client, filename);
+	//loggin all receive calls introduces a bunch of false positives in reguards to
+	// player <-> spray relations, so w pre-filter a bit more
+	
+	//check if this file is owned by the client sending
+	eUserGeneratedContent type;
+	if (GetOwnerOfUserFile(file, type) != client || (type&(ugcSpray|ugcJingle))==ugcNone) {
+		return Plugin_Continue;
+	}
+	
+	if (bLogUserCustomUploads) {
+		LogToFileEx("user_custom_received.log", "Received %s from %L", file, client);
 	}
 	return Plugin_Continue;
 }
@@ -918,110 +857,15 @@ static void UGCFlagString(eUserGeneratedContent flags, char[] string, int maxlen
 	}
 }
 
-void AddFileForScanning(int client, const char[] file) {
-	FileUploadScan entry;
-	char userAuth[32];
-	int userId = GetClientUserId(client);
-	if (!GetClientAuthId(client, AuthId_Steam2, userAuth, sizeof(userAuth))) return; //will this try again later?
-	for (int index=fileUploadScanQueue.Length-1; index>=0; index-=1) {
-		fileUploadScanQueue.GetArray(index,entry);
-		if (entry.userId == userId && StrEqual(entry.file, file)) {
-			entry.ttl += 16;
-			fileUploadScanQueue.SetArray(index,entry);
-			return;
-		}
-	}
-	entry.ttl = 16;
-	entry.userId = userId;
-	entry.auth = userAuth;
-	strcopy(entry.file, sizeof(FileUploadScan::file), file);
-	fileUploadScanQueue.PushArray(entry);
-}
-public Action FileScanTimer(Handle timer) {
-	FileUploadScan entry;
-	for (int index=fileUploadScanQueue.Length-1; index>=0; index-=1) {
-		fileUploadScanQueue.GetArray(index,entry);
-		if (FileExists(entry.file)) {
-			int hits, client = GetClientOfUserId(entry.userId);
-			if ((hits=QuickScanFileTojanBatKillavB(entry.file))) {
-				if (client) {
-					PrintToAdmins(Admin_Kick, "[UGC Blocker] WARNING: File %s from %L had %i triggers for Trojan:BAT/Killav.B", entry.file, client, hits);
-					if (depSBPP)
-						SBPP_BanPlayer(0, client, 0, "[UGC Blocker] user_custom file was flagged as Trojan:BAT/Killav.B");
-					else
-						BanClient(client, 0, BANFLAG_AUTHID, "[UGC Blocker] user_custom file was flagged as Trojan:BAT/Killav.B", "Invalid Client File: Content did not match type");
-				} else {
-					PrintToAdmins(Admin_Kick, "[UGC Blocker] WARNING: File %s from %s had %i triggers for Trojan:BAT/Killav.B", entry.file, entry.auth, hits);
-					// sbpp can not currently ban by id
-					BanIdentity(entry.auth, 0, BANFLAG_AUTHID, "[UGC Blocker] user_custom file was flagged as Trojan:BAT/Killav.B");
-				}
-			}
-			fileUploadScanQueue.Erase(index);
-		} else if (entry.ttl <= 0) {
-			fileUploadScanQueue.Erase(index);
-		} else {
-			entry.ttl -= 1;
-			fileUploadScanQueue.SetArray(index, entry);
-		}
-	}
-}
-
-static int QuickScanFileTojanBatKillavB(const char[] file) {
-	char buffer[1024];
-	int hits;
-	if (!FileExists(file)) {
-//		PrintToServer(">> File %s does not exist", file);
-		return 0;
-	}
-	File fhdl = OpenFile(file, "rt");
-	if (fhdl == null) {
-//		PrintToServer(">> No permission to read file %s", file);
-		return 0;
-	}
-	int read = fhdl.ReadString(buffer, 16, 16);
-	if (read <= 0) {
-		delete fhdl;
-//		PrintToServer(">> Could not read file %s", file);
-		return 0; //can't read
-	}
-	
-	bool textmode;
-	while ((read = fhdl.ReadString(buffer[16], 16, 16))>0 && !textmode) {
-		if (read < 16) buffer[16+read]=0;
-		if (StrContains(buffer, "echo off", false)>=0 ||
-			StrContains(buffer, "tskill", false)>=0 ||
-			StrContains(buffer, "Program Files")>=0) {
-			textmode=true;
-		} else {
-			//move memory before reading next chunk
-			// having this moving window prevents chopped of triggers
-			for (int i;i<16;i++) buffer[i]=buffer[i+16];
-		}
-	}
-	if (textmode) {//we found something that looks like sussy text
-		hits++;
-		if ( fhdl.ReadLine(buffer, sizeof(buffer)) ) //kinda fix fptr for line reading
-			while ( fhdl.ReadLine(buffer,sizeof(buffer)) ) {
-				if (StrContains(buffer, "tskill", false)>=0) hits++;
-				else if ((StrContains(buffer, "del", false)>=0 || StrContains(buffer, "erase", false)>=0) &&
-					(StrContains(buffer, "Program Files", false)>=0)) hits++;
-				else if (StrContains(buffer, "mcafee", false)>=0 || StrContains(buffer, "norton", false)>=0 ||
-					(StrContains(buffer, "kaspersky", false))>=0) hits++;
-			}
-	}
-	delete fhdl;
-	return hits;
-}
-
-void PrintToAdmins(AdminFlag flag, const char[] format, any...) {
-	char msg[1024];
-	VFormat(msg, sizeof(msg), format, 2);
-	PrintToServer("%s", msg);
-	for (int client=1;client<=MaxClients;client++) {
-		if (!IsValidClient(client) || !IsClientAuthorized(client) || !GetAdminFlag(GetUserAdmin(client), flag)) continue;
-		PrintToChat(client, "%s", msg);
-	}
-}
+//void PrintToAdmins(AdminFlag flag, const char[] format, any...) {
+//	char msg[1024];
+//	VFormat(msg, sizeof(msg), format, 2);
+//	PrintToServer("%s", msg);
+//	for (int client=1;client<=MaxClients;client++) {
+//		if (!IsValidClient(client) || !IsClientAuthorized(client) || !GetAdminFlag(GetUserAdmin(client), flag)) continue;
+//		PrintToChat(client, "%s", msg);
+//	}
+//}
 
 //might want to check stuff again at some point
 //void DumpAllAttributes(int entity) {
