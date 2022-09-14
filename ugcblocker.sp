@@ -17,9 +17,9 @@
 
 #if !defined _trustfactor_included
 #warning You are compiling without TrustFactors - Some functionallity will be missing!
-#define PLUGIN_VERSION "22w13a NTF"
+#define PLUGIN_VERSION "22w37a NTF"
 #else
-#define PLUGIN_VERSION "22w13a"
+#define PLUGIN_VERSION "22w37a"
 #endif
 
 #pragma newdecls required
@@ -301,25 +301,13 @@ public Action Command_LookupFile(int client, int args) {
 		ReplyToCommand(client, "Requires a name, userid, steamid or (partial) filename");
 		return Plugin_Handled;
 	}
-	char target[128];
+	char target[64];
 	bool forcedLogs;
 	GetCmdArg(0, target, sizeof(target));
-	if (StrContains(target, "log", false)) forcedLogs=true;
+	if (StrContains(target, "log", false)>0) forcedLogs=true;
+	
 	GetCmdArgString(target, sizeof(target));
-	int online;
-	{
-		int results[1];
-		char name[4];
-		bool tnisml;
-		int hits = ProcessTargetString(target, client, results, 1, COMMAND_FILTER_NO_MULTI|COMMAND_FILTER_NO_IMMUNITY|COMMAND_FILTER_NO_BOTS, name, 0, tnisml);
-		if (hits == COMMAND_TARGET_NOT_IN_GAME || hits == COMMAND_TARGET_NOT_HUMAN) {
-			//we really can't work with those
-			ReplyToTargetError(client, hits);
-		} else if (hits > 0) {
-			//we have an online player
-			online = results[0];
-		}// else try the logs
-	}
+	int online = FindTarget(client, target, true, false);
 	if (!forcedLogs && online > 0) {
 		ReplyToCommand(client, "[UGC] Player '%L'", online);
 		if (clientSprayFile[online][0]) ReplyToCommand(client, "[UGC] > Spray: %s", clientSprayFile[online]);
@@ -333,7 +321,7 @@ public Action Command_LookupFile(int client, int args) {
 		if (log == INVALID_HANDLE) {
 			ReplyToCommand(client, "[UGC] Logs not found");
 		} else {
-			Regex entryUpload = new Regex("^L ([\\w\\/]+ - [0-9:]+): Received user_custom(.*) from (.*)<[0-9]+><(.*)><(?:Console)?>$", PCRE_UTF8|PCRE_CASELESS);
+			Regex entryUpload = new Regex("^L ([\\w\\/]+ - [0-9:]+): Linked User File user_custom(.*) to (.*)<[0-9]+><(.*)><(?:Console)?>$", PCRE_UTF8|PCRE_CASELESS);
 			Regex entrySteam = new Regex("^L ([\\w\\/]+ - [0-9:]+): Custom Texture (\\w+) on ItemDef [0-9]+ \\(\\w+\\) from (.*)<[0-9]+><(.*)><(?:Console)?>$", PCRE_UTF8|PCRE_CASELESS);
 			char line[256];
 			char matchTime[32], matchFile[32], matchName[64], matchSteamID[64];
@@ -391,8 +379,8 @@ public Action Command_LookupFile(int client, int args) {
 public Action Command_Say(int client, const char[] command, int argc) {
 	char message[128];
 	GetCmdArgString(message, sizeof(message));
-	if (!( (StrContains(message, "why can", false)>=0 || StrContains(message, "when can", false)>=0 || StrContains(message, "blocked", false)>=0 || StrContains(message, "not allowed", false)>=0) && 
-			(StrContains(message, " i ", false)>=0 || StrContains(message, " my ", false)>=0) )) {// can also allows for can't
+	if (!( (StrContains(message, "why can", false)>=0 || StrContains(message, "when can", false)>=0 || StrContains(message, "blocked", false)>=0 || StrContains(message, "disabled", false)>=0 || StrContains(message, "not allowed", false)>=0) && 
+			(StrContains(message, " i ", false)>=0 || StrContains(message, " my ", false)>=0 || StrContains(message, " is ", false)>=0 || StrContains(message, "are ", false)>=0) )) {// can also allows for can't
 		return Plugin_Continue; //not directed to us
 	}
 	
@@ -516,8 +504,8 @@ static void GetTrustFactorName(TrustFactors factor, char[] namebuf, int size) {
 		case TrustCProfilePoCBadge: strcopy(namebuf, size, "Community Badge");
 		case TrustNoVACBans: strcopy(namebuf, size, "No VAC Ban");
 		case TrustNotEconomyBanned: strcopy(namebuf, size, "No Trade Ban");
-//		case TrustSBPPGameBan: strcopy(namebuf, size, "No SB Ban");
-//		case TrustSBPPCommBan: strcopy(namebuf, size, "No SB CommBan");
+		case TrustSBPPGameBan: strcopy(namebuf, size, "No SB Ban");
+		case TrustSBPPCommBan: strcopy(namebuf, size, "No SB CommBan");
 	}
 }
 #endif
@@ -526,21 +514,6 @@ public void OnMapStart() {
 	accountCustomTextures.Clear();
 }
 
-public Action OnFileReceive(int client, const char[] file) {
-	//loggin all receive calls introduces a bunch of false positives in reguards to
-	// player <-> spray relations, so w pre-filter a bit more
-	
-	//check if this file is owned by the client sending
-	eUserGeneratedContent type;
-	if (GetOwnerOfUserFile(file, type) != client || (type&(ugcSpray|ugcJingle))==ugcNone) {
-		return Plugin_Continue;
-	}
-	
-	if (bLogUserCustomUploads) {
-		LogToFileEx(UGC_LOGFILE, "Received %s from %L", file, client);
-	}
-	return Plugin_Continue;
-}
 public Action OnFileSend(int client, const char[] file) {
 	eUserGeneratedContent type;
 	int owner = GetOwnerOfUserFile(file, type);
@@ -626,6 +599,15 @@ public void OnClientTrustFactorChanged(int client, TrustFactors oldFactors, Trus
 	UpdateAllowedUGC(client);
 }
 #endif
+
+public void OnClientPostAdminCheck(int client) {
+	//this is logged a bit later so we don't spam the log with connection requests from banned clients
+	if (bLogUserCustomUploads) {
+		LogToFileEx(UGC_LOGFILE, "Linked User File %s to %L", clientSprayFile[client], client);
+		LogToFileEx(UGC_LOGFILE, "Linked User File %s to %L", clientJingleFile[client], client);
+	}
+}
+
 
 static void UpdateAllowedUGCAll() {
 	for (int client=1; client<=MaxClients; client++) {
