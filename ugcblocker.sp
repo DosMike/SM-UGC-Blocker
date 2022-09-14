@@ -17,13 +17,15 @@
 
 #if !defined _trustfactor_included
 #warning You are compiling without TrustFactors - Some functionallity will be missing!
-#define PLUGIN_VERSION "22w13a NTF"
+#define PLUGIN_VERSION "22w37a NTF"
 #else
-#define PLUGIN_VERSION "22w13a"
+#define PLUGIN_VERSION "22w37a"
 #endif
 
 #pragma newdecls required
 #pragma semicolon 1
+
+#define UGC_LOGFILE "user_generated_content.log"
 
 enum eUserGeneratedContent (<<=1) {
 	ugcNone=0,
@@ -38,12 +40,6 @@ enum struct FileRequestData {
 	int target;
 	int source;
 	eUserGeneratedContent sourceType;
-}
-enum struct FileUploadScan {
-	int userId;
-	int ttl;
-	char auth[32];
-	char file[PLATFORM_MAX_PATH];
 }
 
 static bool clientUGCloaded[MAXPLAYERS+1]; //did we load ugc flags?
@@ -78,10 +74,10 @@ static bool bConVarUpdates; //allow user flag updates from convar changes, disab
 
 static ConVar cvar_logUploads;
 static bool bLogUserCustomUploads;
-static ConVar cvar_scanUserFiles;
-static bool bScanUserFiles;
+//this is used to reduce the amount of log entries, but because i can't waste arbitrary amounts of memory
+//i will clear this map every map. entries are "accountidhex_customtexturehex" -> 1 (so used as hash set)
+static StringMap accountCustomTextures;
 
-static bool depSBPP;
 static bool depFNM;
 static bool depLateDL;
 
@@ -161,14 +157,11 @@ public void OnPluginStart() {
 	cvar_logUploads = CreateConVar("sm_ugc_log_uploads", "1", "Log all client file uploads to user_custom_received.log", FCVAR_HIDDEN|FCVAR_UNLOGGED, true, 0.0, true, 1.0);
 	HookAndLoad(cvar_logUploads, OnCvarChange_LogUploads);
 	
-	cvar_scanUserFiles = CreateConVar("sm_ugc_scan_uploads", "1", "Scan user upload for suspicious content", FCVAR_HIDDEN|FCVAR_UNLOGGED, true, 0.0, true, 1.0);
-	HookAndLoad(cvar_scanUserFiles, OnCvarChange_ScanUserFiles);
-	
 	AutoExecConfig();
 	bConVarUpdates=true;
 	
 	fileRequestQueue = new ArrayList(sizeof(FileRequestData));
-	fileUploadScanQueue = new ArrayList(sizeof(FileUploadScan));
+	accountCustomTextures = new StringMap();
 	
 	AddTempEntHook("Player Decal", OnTempEnt_PlayerDecal);
 	if (GetEngineVersion() == Engine_TF2) {
@@ -180,7 +173,6 @@ public void OnPluginStart() {
 	RegAdminCmd("sm_ugclookup", Command_LookupFile, ADMFLAG_KICK, "Usage: sm_ugclookup <userid|name|steamid|filename> - Lookup ugc filenames <-> SteamIDs. Return online players if any match, scan though log otherwise");
 	RegAdminCmd("sm_ugclookuplogs", Command_LookupFile, ADMFLAG_KICK, "Usage: sm_ugclookuplogs <name|steamid|filename> - Lookup ugc filenames <-> SteamIDs. Scan log files directly");
 	
-	RegAdminCmd("sm_ugcscanusercustom", Command_ScanUserCustom, ADMFLAG_ROOT, "Usage: sm_ugcscanusercustom - Scan all user_custom files");
 	AddCommandListener(Command_Say, "say");
 	AddCommandListener(Command_Say, "say_team");
 }
@@ -281,27 +273,16 @@ public void OnCvarChange_TrustDescription(ConVar convar, const char[] oldValue, 
 public void OnCvarChange_LogUploads(ConVar convar, const char[] oldValue, const char[] newValue) {
 	bLogUserCustomUploads = convar.BoolValue;
 }
-public void OnCvarChange_ScanUserFiles(ConVar convar, const char[] oldValue, const char[] newValue) {
-	bScanUserFiles = convar.BoolValue;
-	if (!bScanUserFiles) {
-		fileUploadScanQueue.Clear();
-	}
-}
 
 public void OnAllPluginsLoaded() {
-	depSBPP = LibraryExists("sourcebans++");
 	depFNM = LibraryExists("filenetmessages");
 	depLateDL = LibraryExists("Late Downloads");
 }
 public void OnLibraryAdded(const char[] name) {
-	if (StrEqual(name, "sourcebans++")) depSBPP = true;
 	if (StrEqual(name, "filenetmessages")) depFNM = true;
 	if (StrEqual(name, "Late Downloads")) depLateDL = true;
 }
 public void OnLibraryRemoved(const char[] name) {
-	if (StrEqual(name, "sourcebans++")) {
-		depSBPP = false;
-	}
 	if (StrEqual(name, "filenetmessages")) {
 		depFNM = false;
 		fileRequestQueue.Clear();
@@ -320,25 +301,13 @@ public Action Command_LookupFile(int client, int args) {
 		ReplyToCommand(client, "Requires a name, userid, steamid or (partial) filename");
 		return Plugin_Handled;
 	}
-	char target[128];
+	char target[64];
 	bool forcedLogs;
 	GetCmdArg(0, target, sizeof(target));
-	if (StrContains(target, "log", false)) forcedLogs=true;
+	if (StrContains(target, "log", false)>0) forcedLogs=true;
+	
 	GetCmdArgString(target, sizeof(target));
-	int online;
-	{
-		int results[1];
-		char name[4];
-		bool tnisml;
-		int hits = ProcessTargetString(target, client, results, 1, COMMAND_FILTER_NO_MULTI|COMMAND_FILTER_NO_IMMUNITY|COMMAND_FILTER_NO_BOTS, name, 0, tnisml);
-		if (hits == COMMAND_TARGET_NOT_IN_GAME || hits == COMMAND_TARGET_NOT_HUMAN) {
-			//we really can't work with those
-			ReplyToTargetError(client, hits);
-		} else if (hits > 0) {
-			//we have an online player
-			online = results[0];
-		}// else try the logs
-	}
+	int online = FindTarget(client, target, true, false);
 	if (!forcedLogs && online > 0) {
 		ReplyToCommand(client, "[UGC] Player '%L'", online);
 		if (clientSprayFile[online][0]) ReplyToCommand(client, "[UGC] > Spray: %s", clientSprayFile[online]);
@@ -348,29 +317,41 @@ public Action Command_LookupFile(int client, int args) {
 		UGCFlagString(clientUGC[online], target, sizeof(target));
 		ReplyToCommand(client, "[UGC] Has permission to %s", target);
 	} else {
-		File log = OpenFile("user_custom_received.log", "rt");
+		File log = OpenFile(UGC_LOGFILE, "rt");
 		if (log == INVALID_HANDLE) {
 			ReplyToCommand(client, "[UGC] Logs not found");
 		} else {
-			Regex entry = new Regex("^L ([\\w\\/]+ - [0-9:]+): Received user_custom(.*) from (.*)<[0-9]+><(.*)><(?:Console)?>$", PCRE_UTF8|PCRE_CASELESS);
+			Regex entryUpload = new Regex("^L ([\\w\\/]+ - [0-9:]+): Linked User File user_custom(.*) to (.*)<[0-9]+><(.*)><(?:Console)?>$", PCRE_UTF8|PCRE_CASELESS);
+			Regex entrySteam = new Regex("^L ([\\w\\/]+ - [0-9:]+): Custom Texture (\\w+) on ItemDef [0-9]+ \\(\\w+\\) from (.*)<[0-9]+><(.*)><(?:Console)?>$", PCRE_UTF8|PCRE_CASELESS);
 			char line[256];
 			char matchTime[32], matchFile[32], matchName[64], matchSteamID[64];
 			ArrayList hits = new ArrayList(ByteCountToCells(256));
 			while (log.ReadLine(line, sizeof(line))) {
-				if (entry.Match(line)>0) {
-					entry.GetSubString(1, matchTime, sizeof(matchTime));
-					entry.GetSubString(2, matchFile, sizeof(matchFile));
-					entry.GetSubString(3, matchName, sizeof(matchName));
-					entry.GetSubString(4, matchSteamID, sizeof(matchSteamID));
+				if (entryUpload.Match(line)>0) {
+					entryUpload.GetSubString(1, matchTime, sizeof(matchTime));
+					entryUpload.GetSubString(2, matchFile, sizeof(matchFile));
+					entryUpload.GetSubString(3, matchName, sizeof(matchName));
+					entryUpload.GetSubString(4, matchSteamID, sizeof(matchSteamID));
 					
 					if (StrContains(matchSteamID, target, false)>=0 || StrContains(matchName, target, false)>=0 || StrContains(matchFile, target, false)>=0) {
 						Format(line, sizeof(line), " %s  %s<%s>  at %s", matchFile, matchName, matchSteamID, matchTime);
 						hits.PushString(line);
 					}
+				} else if (entrySteam.Match(line)>0) {
+					entrySteam.GetSubString(1, matchTime, sizeof(matchTime));
+					entrySteam.GetSubString(2, matchFile, sizeof(matchFile));
+					entrySteam.GetSubString(3, matchName, sizeof(matchName));
+					entrySteam.GetSubString(4, matchSteamID, sizeof(matchSteamID));
+					
+					if (StrContains(matchSteamID, target, false)>=0 || StrContains(matchName, target, false)>=0 || StrContains(matchFile, target, false)>=0) {
+						Format(line, sizeof(line), " UGCHandle %s  %s<%s>  at %s", matchFile, matchName, matchSteamID, matchTime);
+						hits.PushString(line);
+					}
 				}
 			}
 			delete log;
-			delete entry;
+			delete entryUpload;
+			delete entrySteam;
 			if (hits.Length==0) {
 				ReplyToCommand(client, "[UGC] No hits for target %s", target);
 			} else {
@@ -394,40 +375,12 @@ public Action Command_LookupFile(int client, int args) {
 	}
 	return Plugin_Handled;
 }
-public Action Command_ScanUserCustom(int client, int args) {
-	DirectoryListing layer0 = OpenDirectory("download/user_custom"), layer1;
-	char subdir[32] = "download/user_custom/", filename[64];
-	FileType ftype; int scanned, trojanbatkillavb;
-//	ReplySource rs = GetCmdReplySource();
-//	if (rs != SM_REPLY_TO_CONSOLE) ReplyToCommand(client, "[UGC Blocker] Check console for output");
-//	SetCmdReplySource(SM_REPLY_TO_CONSOLE);
-	while (layer0.GetNext(subdir[21], sizeof(subdir)-21, ftype)) {
-		if (ftype != FileType_Directory || StrEqual(subdir[20],"/.") || StrEqual(subdir[20],"/..")) continue;
-		
-		layer1 = OpenDirectory(subdir);
-		while(layer1.GetNext(filename, sizeof(filename), ftype)){
-			if (ftype != FileType_File || StrEqual(filename, ".") || StrEqual(filename, "..")) continue;
-			Format(filename, sizeof(filename), "%s/%s", subdir, filename);
-			scanned+=1;
-			
-			int hits=QuickScanFileTojanBatKillavB(filename);
-			if (hits) {
-				ReplyToCommand(client, "[UGC Blocker] WARNING: Detected Trojan:BAT/Killav.B in %s with %i hits", filename, hits);
-				trojanbatkillavb+=1;
-			}
-		}
-		delete layer1;
-	}
-	delete layer0;
-	ReplyToCommand(client, "[UGC Blocker] Scanned %i files in /user_custom/", scanned);
-	ReplyToCommand(client, "> Files marked Trojan:BAT/Killav.B : %3i %6.2f%%", trojanbatkillavb, trojanbatkillavb*100.0/scanned);
-//	SetCmdReplySource(rs);
-}
+
 public Action Command_Say(int client, const char[] command, int argc) {
 	char message[128];
 	GetCmdArgString(message, sizeof(message));
-	if (!( (StrContains(message, "why can", false)>=0 || StrContains(message, "when can", false)>=0) && 
-			(StrContains(message, " i ", false)>=0)) ) {//also allows for can't
+	if (!( (StrContains(message, "why can", false)>=0 || StrContains(message, "when can", false)>=0 || StrContains(message, "blocked", false)>=0 || StrContains(message, "disabled", false)>=0 || StrContains(message, "not allowed", false)>=0) && 
+			(StrContains(message, " i ", false)>=0 || StrContains(message, " my ", false)>=0 || StrContains(message, " is ", false)>=0 || StrContains(message, "are ", false)>=0) )) {// can also allows for can't
 		return Plugin_Continue; //not directed to us
 	}
 	
@@ -551,33 +504,16 @@ static void GetTrustFactorName(TrustFactors factor, char[] namebuf, int size) {
 		case TrustCProfilePoCBadge: strcopy(namebuf, size, "Community Badge");
 		case TrustNoVACBans: strcopy(namebuf, size, "No VAC Ban");
 		case TrustNotEconomyBanned: strcopy(namebuf, size, "No Trade Ban");
-//		case TrustSBPPGameBan: strcopy(namebuf, size, "No SB Ban");
-//		case TrustSBPPCommBan: strcopy(namebuf, size, "No SB CommBan");
+		case TrustSBPPGameBan: strcopy(namebuf, size, "No SB Ban");
+		case TrustSBPPCommBan: strcopy(namebuf, size, "No SB CommBan");
 	}
 }
 #endif
 
 public void OnMapStart() {
-	if (bLogUserCustomUploads) {
-		char mapName[128];
-		GetCurrentMap(mapName, sizeof(mapName));
-		LogToFileEx("user_custom_received.log", "----- Map Changed To %s -----", mapName);
-	}
-	
-	CreateTimer(0.5, FileScanTimer, _, TIMER_REPEAT|TIMER_FLAG_NO_MAPCHANGE);
+	accountCustomTextures.Clear();
 }
 
-public Action OnFileReceive(int client, const char[] file) {
-	if (bLogUserCustomUploads) {
-		LogToFileEx("user_custom_received.log", "Received %s from %L", file, client);
-	}
-	if (bScanUserFiles && StrContains(file, "user_custom/")>=0) {
-		char filename[128];
-		Format(filename, sizeof(filename), "download/%s", file);
-		AddFileForScanning(client, filename);
-	}
-	return Plugin_Continue;
-}
 public Action OnFileSend(int client, const char[] file) {
 	eUserGeneratedContent type;
 	int owner = GetOwnerOfUserFile(file, type);
@@ -663,6 +599,15 @@ public void OnClientTrustFactorChanged(int client, TrustFactors oldFactors, Trus
 	UpdateAllowedUGC(client);
 }
 #endif
+
+public void OnClientPostAdminCheck(int client) {
+	//this is logged a bit later so we don't spam the log with connection requests from banned clients
+	if (bLogUserCustomUploads) {
+		LogToFileEx(UGC_LOGFILE, "Linked User File %s to %L", clientSprayFile[client], client);
+		LogToFileEx(UGC_LOGFILE, "Linked User File %s to %L", clientJingleFile[client], client);
+	}
+}
+
 
 static void UpdateAllowedUGCAll() {
 	for (int client=1; client<=MaxClients; client++) {
@@ -751,7 +696,7 @@ void CheckClientItems(int client) {
 	for (int slot;slot<4;slot++) {
 		int weapon = TF2Util_GetPlayerLoadoutEntity(client, slot);
 		if (weapon != INVALID_ENT_REFERENCE) {
-			flags = UGCCheckItem(weapon) & ~clientUGC[client];
+			flags = UGCCheckItem(weapon,client) & ~clientUGC[client];
 			if (flags == ugcDecal) {
 				RemoveItemDecal(weapon);
 				TF2Econ_TranslateLoadoutSlotIndexToName(slot, slotName, sizeof(slotName));
@@ -769,7 +714,7 @@ void CheckClientItems(int client) {
 	ArrayStack blocked = new ArrayStack();
 	eUserGeneratedContent flags2;
 	for (int wno; wno < to; wno++) {
-		flags = UGCCheckItem(entity = TF2Util_GetPlayerWearable(client, wno)) & ~clientUGC[client];
+		flags = UGCCheckItem(entity = TF2Util_GetPlayerWearable(client, wno), client) & ~clientUGC[client];
 		if (flags) {
 			blocked.Push(entity);
 			flags2 |= flags;
@@ -782,7 +727,7 @@ void CheckClientItems(int client) {
 	}
 	delete blocked;
 }
-static eUserGeneratedContent UGCCheckItem(int entity) {
+static eUserGeneratedContent UGCCheckItem(int entity, int owner) {
 	eUserGeneratedContent ugc = ugcNone;
 	int item = GetItemDefinitionIndex(entity);
 	if (item < 0) return ugc;
@@ -790,14 +735,28 @@ static eUserGeneratedContent UGCCheckItem(int entity) {
 	char classname[64];
 	GetEntityClassname(entity, classname, sizeof(classname));
 	
-	int aidx[16];
-	any aval[16];
+	int ugch, ugcl;
+	
+	int aidx[32];
+	any aval[32];
 	int acnt = TF2Attrib_GetSOCAttribs(entity, aidx, aval);
 	for (int i;i<acnt;i++) switch(aidx[i]) {
-		case 152: if (aval[i]) ugc |= ugcDecal;
-		case 227: if (aval[i]) ugc |= ugcDecal;
-		case 500: if (aval[i]) ugc |= ugcName;
-		case 501: if (aval[i]) ugc |= ugcDescription;
+		case 152: if ((ugcl=aval[i])!=0) ugc |= ugcDecal;
+		case 227: if ((ugch=aval[i])!=0) ugc |= ugcDecal;
+		case 500: if (aval[i]!=0) ugc |= ugcName;
+		case 501: if (aval[i]!=0) ugc |= ugcDescription;
+	}
+	
+	if (ugch || ugcl) {
+		char buffer[64];
+		GetClientAuthId(owner, AuthId_SteamID64, buffer, sizeof(buffer));
+		Format(buffer,sizeof(buffer),"%s_%08X%08X", buffer, ugch,ugcl);
+		int val;
+		if (!accountCustomTextures.GetValue(buffer,val)) {
+			accountCustomTextures.SetValue(buffer,1);
+			LogToFileEx(UGC_LOGFILE, "Custom Texture %08X%08X on ItemDef %i (%s) from %L", 
+				ugch,ugcl, GetItemDefinitionIndex(entity), classname, owner);
+		}
 	}
 	
 // requires nosoops experimental branch of tf2attributes, but would be able to check slurs 
@@ -908,110 +867,15 @@ static void UGCFlagString(eUserGeneratedContent flags, char[] string, int maxlen
 	}
 }
 
-void AddFileForScanning(int client, const char[] file) {
-	FileUploadScan entry;
-	char userAuth[32];
-	int userId = GetClientUserId(client);
-	if (!GetClientAuthId(client, AuthId_Steam2, userAuth, sizeof(userAuth))) return; //will this try again later?
-	for (int index=fileUploadScanQueue.Length-1; index>=0; index-=1) {
-		fileUploadScanQueue.GetArray(index,entry);
-		if (entry.userId == userId && StrEqual(entry.file, file)) {
-			entry.ttl += 16;
-			fileUploadScanQueue.SetArray(index,entry);
-			return;
-		}
-	}
-	entry.ttl = 16;
-	entry.userId = userId;
-	entry.auth = userAuth;
-	strcopy(entry.file, sizeof(FileUploadScan::file), file);
-	fileUploadScanQueue.PushArray(entry);
-}
-public Action FileScanTimer(Handle timer) {
-	FileUploadScan entry;
-	for (int index=fileUploadScanQueue.Length-1; index>=0; index-=1) {
-		fileUploadScanQueue.GetArray(index,entry);
-		if (FileExists(entry.file)) {
-			int hits, client = GetClientOfUserId(entry.userId);
-			if ((hits=QuickScanFileTojanBatKillavB(entry.file))) {
-				if (client) {
-					PrintToAdmins(Admin_Kick, "[UGC Blocker] WARNING: File %s from %L had %i triggers for Trojan:BAT/Killav.B", entry.file, client, hits);
-					if (depSBPP)
-						SBPP_BanPlayer(0, client, 0, "[UGC Blocker] user_custom file was flagged as Trojan:BAT/Killav.B");
-					else
-						BanClient(client, 0, BANFLAG_AUTHID, "[UGC Blocker] user_custom file was flagged as Trojan:BAT/Killav.B", "Invalid Client File: Content did not match type");
-				} else {
-					PrintToAdmins(Admin_Kick, "[UGC Blocker] WARNING: File %s from %s had %i triggers for Trojan:BAT/Killav.B", entry.file, entry.auth, hits);
-					// sbpp can not currently ban by id
-					BanIdentity(entry.auth, 0, BANFLAG_AUTHID, "[UGC Blocker] user_custom file was flagged as Trojan:BAT/Killav.B");
-				}
-			}
-			fileUploadScanQueue.Erase(index);
-		} else if (entry.ttl <= 0) {
-			fileUploadScanQueue.Erase(index);
-		} else {
-			entry.ttl -= 1;
-			fileUploadScanQueue.SetArray(index, entry);
-		}
-	}
-}
-
-static int QuickScanFileTojanBatKillavB(const char[] file) {
-	char buffer[1024];
-	int hits;
-	if (!FileExists(file)) {
-//		PrintToServer(">> File %s does not exist", file);
-		return 0;
-	}
-	File fhdl = OpenFile(file, "rt");
-	if (fhdl == null) {
-//		PrintToServer(">> No permission to read file %s", file);
-		return 0;
-	}
-	int read = fhdl.ReadString(buffer, 16, 16);
-	if (read <= 0) {
-		delete fhdl;
-//		PrintToServer(">> Could not read file %s", file);
-		return 0; //can't read
-	}
-	
-	bool textmode;
-	while ((read = fhdl.ReadString(buffer[16], 16, 16))>0 && !textmode) {
-		if (read < 16) buffer[16+read]=0;
-		if (StrContains(buffer, "echo off", false)>=0 ||
-			StrContains(buffer, "tskill", false)>=0 ||
-			StrContains(buffer, "Program Files")>=0) {
-			textmode=true;
-		} else {
-			//move memory before reading next chunk
-			// having this moving window prevents chopped of triggers
-			for (int i;i<16;i++) buffer[i]=buffer[i+16];
-		}
-	}
-	if (textmode) {//we found something that looks like sussy text
-		hits++;
-		if ( fhdl.ReadLine(buffer, sizeof(buffer)) ) //kinda fix fptr for line reading
-			while ( fhdl.ReadLine(buffer,sizeof(buffer)) ) {
-				if (StrContains(buffer, "tskill", false)>=0) hits++;
-				else if ((StrContains(buffer, "del", false)>=0 || StrContains(buffer, "erase", false)>=0) &&
-					(StrContains(buffer, "Program Files", false)>=0)) hits++;
-				else if (StrContains(buffer, "mcafee", false)>=0 || StrContains(buffer, "norton", false)>=0 ||
-					(StrContains(buffer, "kaspersky", false))>=0) hits++;
-			}
-	}
-	delete fhdl;
-	return hits;
-}
-
-void PrintToAdmins(AdminFlag flag, const char[] format, any...) {
-	char msg[1024];
-	VFormat(msg, sizeof(msg), format, 2);
-	PrintToServer("%s", msg);
-	for (int client=1;client<=MaxClients;client++) {
-		if (!IsValidClient(client) || !IsClientAuthorized(client) || !GetAdminFlag(GetUserAdmin(client), flag)) continue;
-		PrintToChat(client, "%s", msg);
-	}
-}
+//void PrintToAdmins(AdminFlag flag, const char[] format, any...) {
+//	char msg[1024];
+//	VFormat(msg, sizeof(msg), format, 2);
+//	PrintToServer("%s", msg);
+//	for (int client=1;client<=MaxClients;client++) {
+//		if (!IsValidClient(client) || !IsClientAuthorized(client) || !GetAdminFlag(GetUserAdmin(client), flag)) continue;
+//		PrintToChat(client, "%s", msg);
+//	}
+//}
 
 //might want to check stuff again at some point
 //void DumpAllAttributes(int entity) {
