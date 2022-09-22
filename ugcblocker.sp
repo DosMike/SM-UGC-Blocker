@@ -17,9 +17,9 @@
 
 #if !defined _trustfactor_included
 #warning You are compiling without TrustFactors - Some functionallity will be missing!
-#define PLUGIN_VERSION "22w37a NTF"
+#define PLUGIN_VERSION "22w38a NTF"
 #else
-#define PLUGIN_VERSION "22w37a"
+#define PLUGIN_VERSION "22w38a"
 #endif
 
 #pragma newdecls required
@@ -602,7 +602,7 @@ public void OnClientTrustFactorChanged(int client, TrustFactors oldFactors, Trus
 
 public void OnClientPostAdminCheck(int client) {
 	//this is logged a bit later so we don't spam the log with connection requests from banned clients
-	if (bLogUserCustomUploads) {
+	if (bLogUserCustomUploads && !IsFakeClient(client) && !IsClientSourceTV(client) && !IsClientReplay(client)) {
 		LogToFileEx(UGC_LOGFILE, "Linked User File %s to %L", clientSprayFile[client], client);
 		LogToFileEx(UGC_LOGFILE, "Linked User File %s to %L", clientJingleFile[client], client);
 	}
