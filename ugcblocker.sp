@@ -10,16 +10,12 @@
 #include "sourcebanspp.inc"
 #tryinclude <trustfactor>
 #define REQUIRE_PLUGIN
-#undef REQUIRE_EXTENSIONS
-#include "filenetmessages.inc"
-#include "latedl.inc"
-#define REQUIRE_EXTENSIONS
 
 #if !defined _trustfactor_included
 #warning You are compiling without TrustFactors - Some functionallity will be missing!
-#define PLUGIN_VERSION "22w38a NTF"
+#define PLUGIN_VERSION "25w11a NTF"
 #else
-#define PLUGIN_VERSION "22w38a"
+#define PLUGIN_VERSION "25w11a"
 #endif
 
 #pragma newdecls required
@@ -27,13 +23,13 @@
 
 #define UGC_LOGFILE "user_generated_content.log"
 
-enum eUserGeneratedContent (<<=1) {
+enum eUserGeneratedContent {
 	ugcNone=0,
 	ugcSpray=1,
-	ugcJingle, //this is an audatory version of sprays: wav @44.1kHz, max 512KiB
-	ugcDecal,
-	ugcName,
-	ugcDescription,
+	ugcJingle=2, //this is an audatory version of sprays: wav @44.1kHz, max 512KiB
+	ugcDecal=4,
+	ugcName=8,
+	ugcDescription=16,
 }
 
 enum struct FileRequestData {
@@ -43,11 +39,10 @@ enum struct FileRequestData {
 }
 
 static bool clientUGCloaded[MAXPLAYERS+1]; //did we load ugc flags?
-static eUserGeneratedContent clientUGC[MAXPLAYERS+1]; //green-light flags for trusted 
+static eUserGeneratedContent clientUGC[MAXPLAYERS+1]; //green-light flags for trusted
 static eUserGeneratedContent checkUGCTypes; //we only care to check those
 static char clientSprayFile[MAXPLAYERS+1][128];
 static char clientJingleFile[MAXPLAYERS+1][128];
-static ArrayList fileRequestQueue; //flagging files as not transmitted
 static ArrayList fileUploadScanQueue; //files that were just uploaded and need to be scanned
 static bool clientNotifiedGrants[MAXPLAYERS+1]; //did we tell the player what they can do?
 
@@ -78,9 +73,6 @@ static bool bLogUserCustomUploads;
 //i will clear this map every map. entries are "accountidhex_customtexturehex" -> 1 (so used as hash set)
 static StringMap accountCustomTextures;
 
-static bool depFNM;
-static bool depLateDL;
-
 public Plugin myinfo = {
 	name = "UGC Blocker",
 	author = "reBane",
@@ -106,44 +98,44 @@ public void LockConVar(ConVar convar, const char[] oldValue, const char[] newVal
 }
 
 public void OnPluginStart() {
-	
+
 	LoadTranslations("common.phrases");
-	
+
 	ConVar version = CreateConVar("sm_ugcblocker_version", PLUGIN_VERSION, _, FCVAR_NOTIFY|FCVAR_DONTRECORD);
 	HookAndLoad(version, LockConVar);
 	delete version;
-	
+
 	cvar_disable_Spray = CreateConVar("sm_ugc_disable_spray", "0", "Always block players from using sprays", FCVAR_HIDDEN|FCVAR_UNLOGGED, true, 0.0, true, 1.0);
 	HookAndLoad(cvar_disable_Spray, OnCvarChange_DisableSpray);
-	
+
 	cvar_disable_Jingle = CreateConVar("sm_ugc_disable_jingle", "0", "Always block players from using jingles ('sound sprays')", FCVAR_HIDDEN|FCVAR_UNLOGGED, true, 0.0, true, 1.0);
 	HookAndLoad(cvar_disable_Jingle, OnCvarChange_DisableJingle);
-	
+
 	if (GetEngineVersion() == Engine_TF2) {
 		cvar_disable_Decal = CreateConVar("sm_ugc_disable_decal", "0", "Always block items with custom decals", FCVAR_HIDDEN|FCVAR_UNLOGGED, true, 0.0, true, 1.0);
 		HookAndLoad(cvar_disable_Decal, OnCvarChange_DisableDecal);
-		
+
 		cvar_disable_Name = CreateConVar("sm_ugc_disable_name", "0", "Always block items with custom names", FCVAR_HIDDEN|FCVAR_UNLOGGED, true, 0.0, true, 1.0);
 		HookAndLoad(cvar_disable_Name, OnCvarChange_DisableName);
-		
+
 		cvar_disable_Description = CreateConVar("sm_ugc_disable_description", "0", "Always block items with custom descriptions", FCVAR_HIDDEN|FCVAR_UNLOGGED, true, 0.0, true, 1.0);
 		HookAndLoad(cvar_disable_Description, OnCvarChange_DisableDescription);
 	}
-	
+
 #if defined _trustfactor_included
 	cvar_trust_Spray = CreateConVar("sm_ugc_trust_spray", "*3", "TrustFlags required to allow sprays, empty to always allow", FCVAR_HIDDEN|FCVAR_UNLOGGED);
 	HookAndLoad(cvar_trust_Spray, OnCvarChange_TrustSpray);
-	
+
 	cvar_trust_Jingle = CreateConVar("sm_ugc_trust_jingle", "*3", "TrustFlags required to allow jingles, empty to always allow", FCVAR_HIDDEN|FCVAR_UNLOGGED);
 	HookAndLoad(cvar_trust_Jingle, OnCvarChange_TrustJingle);
-	
+
 	if (GetEngineVersion() == Engine_TF2) {
 		cvar_trust_Decal = CreateConVar("sm_ugc_trust_decal", "*3", "TrustFlags required to allow items with custom decals, empty to always allow", FCVAR_HIDDEN|FCVAR_UNLOGGED);
 		HookAndLoad(cvar_trust_Decal, OnCvarChange_TrustDecal);
-		
+
 		cvar_trust_Name = CreateConVar("sm_ugc_trust_name", "*3", "TrustFlags required to allow items with custom names, empty to always allow", FCVAR_HIDDEN|FCVAR_UNLOGGED);
 		HookAndLoad(cvar_trust_Name, OnCvarChange_TrustName);
-		
+
 		cvar_trust_Description = CreateConVar("sm_ugc_trust_description", "*3", "TrustFlags required to allow items with custom descriptions, empty to always allow", FCVAR_HIDDEN|FCVAR_UNLOGGED);
 		HookAndLoad(cvar_trust_Description, OnCvarChange_TrustDescription);
 	}
@@ -153,32 +145,32 @@ public void OnPluginStart() {
 	if (GetEngineVersion() == Engine_TF2)
 		checkUGCTypes |= ugcDecal|ugcName|ugcDescription;
 #endif
-	
+
 	cvar_logUploads = CreateConVar("sm_ugc_log_uploads", "1", "Log all client file uploads to user_custom_received.log", FCVAR_HIDDEN|FCVAR_UNLOGGED, true, 0.0, true, 1.0);
 	HookAndLoad(cvar_logUploads, OnCvarChange_LogUploads);
-	
+
 	AutoExecConfig();
 	bConVarUpdates=true;
-	
-	fileRequestQueue = new ArrayList(sizeof(FileRequestData));
+
 	accountCustomTextures = new StringMap();
-	
+
 	AddTempEntHook("Player Decal", OnTempEnt_PlayerDecal);
 	if (GetEngineVersion() == Engine_TF2) {
 		HookEvent("post_inventory_application", OnEvent_ClientInventoryRegeneratePost, EventHookMode_Pre);
 	} //for other games we use the spawn post sdkhook
-	
+
 	UpdateAllowedUGCAll();
-	
+
 	RegAdminCmd("sm_ugclookup", Command_LookupFile, ADMFLAG_KICK, "Usage: sm_ugclookup <userid|name|steamid|filename> - Lookup ugc filenames <-> SteamIDs. Return online players if any match, scan though log otherwise");
 	RegAdminCmd("sm_ugclookuplogs", Command_LookupFile, ADMFLAG_KICK, "Usage: sm_ugclookuplogs <name|steamid|filename> - Lookup ugc filenames <-> SteamIDs. Scan log files directly");
-	
+
 	AddCommandListener(Command_Say, "say");
 	AddCommandListener(Command_Say, "say_team");
+
+	RegAdminCmd("untrustmyspray", Command_Untrustme, ADMFLAG_KICK, "");
 }
 
 public void OnPluginEnd() {
-	delete fileRequestQueue;
 	delete fileUploadScanQueue;
 }
 
@@ -274,25 +266,6 @@ public void OnCvarChange_LogUploads(ConVar convar, const char[] oldValue, const 
 	bLogUserCustomUploads = convar.BoolValue;
 }
 
-public void OnAllPluginsLoaded() {
-	depFNM = LibraryExists("filenetmessages");
-	depLateDL = LibraryExists("Late Downloads");
-}
-public void OnLibraryAdded(const char[] name) {
-	if (StrEqual(name, "filenetmessages")) depFNM = true;
-	if (StrEqual(name, "Late Downloads")) depLateDL = true;
-}
-public void OnLibraryRemoved(const char[] name) {
-	if (StrEqual(name, "filenetmessages")) {
-		depFNM = false;
-		fileRequestQueue.Clear();
-	}
-	if (StrEqual(name, "Late Downloads")) {
-		depLateDL = false;
-		fileRequestQueue.Clear();
-	}
-}
-
 
 // ===== Ok, boilerplate is over =====
 
@@ -305,7 +278,7 @@ public Action Command_LookupFile(int client, int args) {
 	bool forcedLogs;
 	GetCmdArg(0, target, sizeof(target));
 	if (StrContains(target, "log", false)>0) forcedLogs=true;
-	
+
 	GetCmdArgString(target, sizeof(target));
 	int online = FindTarget(client, target, true, false);
 	if (!forcedLogs && online > 0) {
@@ -332,7 +305,7 @@ public Action Command_LookupFile(int client, int args) {
 					entryUpload.GetSubString(2, matchFile, sizeof(matchFile));
 					entryUpload.GetSubString(3, matchName, sizeof(matchName));
 					entryUpload.GetSubString(4, matchSteamID, sizeof(matchSteamID));
-					
+
 					if (StrContains(matchSteamID, target, false)>=0 || StrContains(matchName, target, false)>=0 || StrContains(matchFile, target, false)>=0) {
 						Format(line, sizeof(line), " %s  %s<%s>  at %s", matchFile, matchName, matchSteamID, matchTime);
 						hits.PushString(line);
@@ -342,7 +315,7 @@ public Action Command_LookupFile(int client, int args) {
 					entrySteam.GetSubString(2, matchFile, sizeof(matchFile));
 					entrySteam.GetSubString(3, matchName, sizeof(matchName));
 					entrySteam.GetSubString(4, matchSteamID, sizeof(matchSteamID));
-					
+
 					if (StrContains(matchSteamID, target, false)>=0 || StrContains(matchName, target, false)>=0 || StrContains(matchFile, target, false)>=0) {
 						Format(line, sizeof(line), " UGCHandle %s  %s<%s>  at %s", matchFile, matchName, matchSteamID, matchTime);
 						hits.PushString(line);
@@ -376,16 +349,22 @@ public Action Command_LookupFile(int client, int args) {
 	return Plugin_Handled;
 }
 
+public Action Command_Untrustme(int client, int args) {
+	clientUGC[client] &= ~ugcSpray;
+	ReplyToCommand(client, "You can no longer spray");
+	return Plugin_Handled;
+}
+
 public Action Command_Say(int client, const char[] command, int argc) {
 	char message[128];
 	GetCmdArgString(message, sizeof(message));
-	if (!( (StrContains(message, "why can", false)>=0 || StrContains(message, "when can", false)>=0 || StrContains(message, "blocked", false)>=0 || StrContains(message, "disabled", false)>=0 || StrContains(message, "not allowed", false)>=0) && 
+	if (!( (StrContains(message, "why can", false)>=0 || StrContains(message, "when can", false)>=0 || StrContains(message, "blocked", false)>=0 || StrContains(message, "disabled", false)>=0 || StrContains(message, "not allowed", false)>=0) &&
 			(StrContains(message, " i ", false)>=0 || StrContains(message, " my ", false)>=0 || StrContains(message, " is ", false)>=0 || StrContains(message, "are ", false)>=0) )) {// can also allows for can't
 		return Plugin_Continue; //not directed to us
 	}
-	
+
 	if (StrContains(message, "spray", false)>=0) {
-		if (blockUGCTypes & ugcSpray) 
+		if (blockUGCTypes & ugcSpray)
 			PrintToChat(client, "> Sprays are DISABLED");
 #if defined _trustfactor_included
 		else if (trust_Spray.required || trust_Spray.optional)
@@ -395,7 +374,7 @@ public Action Command_Say(int client, const char[] command, int argc) {
 			PrintToChat(client, "> Sprays are ALLOWED");
 	}
 	if (StrContains(message, "jingle", false)>=0) {
-		if (blockUGCTypes & ugcJingle) 
+		if (blockUGCTypes & ugcJingle)
 			PrintToChat(client, "> Jingles are DISABLED");
 #if defined _trustfactor_included
 		else if (trust_Jingle.required || trust_Jingle.optional)
@@ -406,7 +385,7 @@ public Action Command_Say(int client, const char[] command, int argc) {
 	}
 	if (GetEngineVersion() == Engine_TF2) {
 		if (StrContains(message, "decal", false)>=0) {
-			if (blockUGCTypes & ugcDecal) 
+			if (blockUGCTypes & ugcDecal)
 				PrintToChat(client, "> Decals are DISABLED");
 #if defined _trustfactor_included
 			else if (trust_Decal.required || trust_Decal.optional)
@@ -416,7 +395,7 @@ public Action Command_Say(int client, const char[] command, int argc) {
 				PrintToChat(client, "> Decals are ALLOWED");
 		}
 		if (StrContains(message, "name", false)>=0) {
-			if (blockUGCTypes & ugcName) 
+			if (blockUGCTypes & ugcName)
 				PrintToChat(client, "> Naming Items is DISABLED");
 #if defined _trustfactor_included
 			else if (trust_Name.required || trust_Name.optional)
@@ -426,7 +405,7 @@ public Action Command_Say(int client, const char[] command, int argc) {
 				PrintToChat(client, "> Named Items are ALLOWED");
 		}
 		if (StrContains(message, "desc", false)>=0) {
-			if (blockUGCTypes & ugcDescription) 
+			if (blockUGCTypes & ugcDescription)
 				PrintToChat(client, "> Item Descriptions are DISABLED");
 #if defined _trustfactor_included
 			else if (trust_Description.required || trust_Description.optional)
@@ -514,61 +493,6 @@ public void OnMapStart() {
 	accountCustomTextures.Clear();
 }
 
-public Action OnFileSend(int client, const char[] file) {
-	eUserGeneratedContent type;
-	int owner = GetOwnerOfUserFile(file, type);
-	if (owner < 0) {
-		//block sending - unknown owner?
-		return Plugin_Handled;
-	} else if (owner > 0 && (checkUGCTypes&type) && !(clientUGC[owner]&type)) {
-		//we know the owner, check this type and the owner has that type not granted
-		if ((depFNM||depLateDL) && !clientUGCloaded[owner] && type != ugcNone) {
-			//we have late download, wait for tf response and know the type
-			//...push file download later
-			QueueFileTransfer(client, owner, type);
-		}
-		//block sending - not allowed (yet)
-		return Plugin_Handled;
-	}
-	return Plugin_Continue;
-}
-void QueueFileTransfer(int to, int from, eUserGeneratedContent type) {
-	FileRequestData queue;
-	queue.target = GetClientUserId(to);
-	queue.source = GetClientUserId(from);
-	queue.sourceType = type;
-	fileRequestQueue.PushArray(queue);
-}
-void DropFileTransfers(int client, bool target=true) {
-	if (!IsClientConnected(client)) return;
-	int user=GetClientUserId(client);
-	int index;
-	if (target) {
-		while ((index=fileRequestQueue.FindValue(user, FileRequestData::target))>=0)
-			fileRequestQueue.Erase(index);
-	}
-	while ((index=fileRequestQueue.FindValue(user, FileRequestData::source))>=0)
-		fileRequestQueue.Erase(index);
-}
-void PushFilesFrom(int client, eUserGeneratedContent type) {
-	int fromuser=GetClientUserId(client);
-	FileRequestData queue;
-	//move entries
-	for (int index=fileRequestQueue.Length-1; index>=0; index--) {
-		fileRequestQueue.GetArray(index, queue);
-		if (queue.source == fromuser && queue.sourceType == type) {
-			fileRequestQueue.Erase(index);
-			if (type & ugcSpray) {
-				if (depFNM) FNM_SendFile(GetClientOfUserId(queue.target), "%s", clientSprayFile[client]);
-				else if (depLateDL) AddLateDownload(clientSprayFile[client], false, queue.target);
-			} else if (type & ugcJingle) {
-				if (depFNM) FNM_SendFile(GetClientOfUserId(queue.target), "%s", clientJingleFile[client]);
-				else if (depLateDL) AddLateDownload(clientJingleFile[client], false, queue.target);
-			}
-		}
-	}
-}
-
 public void OnClientConnected(int client) {
 	clientUGCloaded[client] = false;
 	clientNotifiedGrants[client] = false;
@@ -587,7 +511,6 @@ public void OnClientPutInServer(int client) {
 }
 public void OnClientDisconnect(int client) {
 	OnClientConnected(client); //cleanup is the same
-	DropFileTransfers(client); //cancel all transfers queued from and to that client
 }
 
 #if defined _trustfactor_included
@@ -621,6 +544,7 @@ static void UpdateAllowedUGCAll() {
 	}
 }
 static void UpdateAllowedUGC(int client) {
+	if (!IsClientInGame(client) || IsFakeClient(client)) return;
 	eUserGeneratedContent flags = ugcNone, previously = clientUGC[client];
 #if defined _trustfactor_included
 	if (trust_Spray.Test(client)) flags |= ugcSpray;
@@ -638,23 +562,17 @@ static void UpdateAllowedUGC(int client) {
 #endif
 	flags &=~ blockUGCTypes;
 	clientUGC[client]=flags;
-	
+
 	//this update below only if call is late
 	if (IsClientInGame(client) && GetClientTeam(client) > 1) {
 		CheckClientItems(client);
 		if (!(flags & ugcSpray))
 			KillSpray(client);
 	}
-	
+
 	if (flags != previously) {
 		clientNotifiedGrants[client]=false;
 		NotifyClientGrants(client);
-		
-		//find flags that turned on, mask with spray and jingle
-		if (depFNM||depLateDL) {
-			eUserGeneratedContent send = (flags & ~previously) & (ugcSpray|ugcJingle);
-			PushFilesFrom(client, send);
-		}
 	}
 }
 
@@ -662,7 +580,7 @@ static void NotifyClientGrants(int client) {
 	if (clientNotifiedGrants[client]) return; //already notified
 	if (!IsClientInGame(client)) return; //not yet available to be notified
 	clientNotifiedGrants[client]=true;
-	
+
 	char buffer[72];
 	UGCFlagString(clientUGC[client], buffer, sizeof(buffer));
 	PrintToChat(client, "[SM] You are allowed to use %s", buffer);
@@ -670,7 +588,7 @@ static void NotifyClientGrants(int client) {
 
 public void OnEvent_ClientInventoryRegeneratePost(Event event, const char[] name, bool dontBroadcast) {
 	int client = GetClientOfUserId(event.GetInt("userid", 0));
-	if (!IsClientInGame(client) || !IsPlayerAlive(client) || TF2_GetClientTeam(client)<=TFTeam_Spectator || IsFakeClient(client)) return;
+	if (!IsClientInGame(client) || !IsPlayerAlive(client) || IsFakeClient(client) || IsClientReplay(client) || IsClientSourceTV(client) || TF2_GetClientTeam(client)<=TFTeam_Spectator) return;
 	if (clientUGCloaded[client])
 		UpdateAllowedUGC(client);
 	NotifyClientGrants(client);
@@ -681,8 +599,8 @@ public void OnEntityCreated(int entity, const char[] classname){
 		SDKHook(entity, SDKHook_SpawnPost, OnClientSpawnPost);
 }
 public void OnClientSpawnPost(int client) {
-	if (!IsClientInGame(client) || !IsPlayerAlive(client) || GetClientTeam(client)<=1 || IsFakeClient(client)) return;
-	if (clientUGCloaded[client]) 
+	if (!IsClientInGame(client) || !IsPlayerAlive(client) || IsFakeClient(client) || IsClientReplay(client) || IsClientSourceTV(client) || GetClientTeam(client)<=1) return;
+	if (clientUGCloaded[client])
 		UpdateAllowedUGC(client);
 	NotifyClientGrants(client);
 }
@@ -692,7 +610,7 @@ void CheckClientItems(int client) {
 	eUserGeneratedContent flags;
 	char buffer[256];
 	char slotName[24];
-	
+
 	for (int slot;slot<4;slot++) {
 		int weapon = TF2Util_GetPlayerLoadoutEntity(client, slot);
 		if (weapon != INVALID_ENT_REFERENCE) {
@@ -731,12 +649,12 @@ static eUserGeneratedContent UGCCheckItem(int entity, int owner) {
 	eUserGeneratedContent ugc = ugcNone;
 	int item = GetItemDefinitionIndex(entity);
 	if (item < 0) return ugc;
-	
+
 	char classname[64];
 	GetEntityClassname(entity, classname, sizeof(classname));
-	
+
 	int ugch, ugcl;
-	
+
 	int aidx[32];
 	any aval[32];
 	int acnt = TF2Attrib_GetSOCAttribs(entity, aidx, aval);
@@ -746,7 +664,7 @@ static eUserGeneratedContent UGCCheckItem(int entity, int owner) {
 		case 500: if (aval[i]!=0) ugc |= ugcName;
 		case 501: if (aval[i]!=0) ugc |= ugcDescription;
 	}
-	
+
 	if (ugch || ugcl) {
 		char buffer[64];
 		GetClientAuthId(owner, AuthId_SteamID64, buffer, sizeof(buffer));
@@ -754,19 +672,19 @@ static eUserGeneratedContent UGCCheckItem(int entity, int owner) {
 		int val;
 		if (!accountCustomTextures.GetValue(buffer,val)) {
 			accountCustomTextures.SetValue(buffer,1);
-			LogToFileEx(UGC_LOGFILE, "Custom Texture %08X%08X on ItemDef %i (%s) from %L", 
+			LogToFileEx(UGC_LOGFILE, "Custom Texture %08X%08X on ItemDef %i (%s) from %L",
 				ugch,ugcl, GetItemDefinitionIndex(entity), classname, owner);
 		}
 	}
-	
-// requires nosoops experimental branch of tf2attributes, but would be able to check slurs 
+
+// requires nosoops experimental branch of tf2attributes, but would be able to check slurs
 //	char itemName[128];
 //	char itemDesc[256];
 //	TF2Attrib_HookValueString("", "custom_name_attr", entity, itemName, sizeof(itemName));
 //	if (itemName[0]) ugc |= ugcName;
 //	TF2Attrib_HookValueString("", "custom_desc_attr", entity, itemDesc, sizeof(itemDesc));
 //	if (itemDesc[0]) ugc |= ugcDescription;
-	
+
 	return ugc & checkUGCTypes;
 }
 
@@ -782,11 +700,11 @@ public Action OnTempEnt_PlayerDecal(const char[] name, const int[] clients, int 
 	int target = TE_ReadNum("m_nEntity");
 	float origin[3];
 	TE_ReadVector("m_vecOrigin", origin);
-	if (origin[0]==0 && origin[1]==0 && origin[2]==0 && target==0) return Plugin_Continue; //"deleting" spray
-	
+	if (origin[0]==123456.0 && origin[1]==123456.0 && origin[2]==123456.0 && target==0) return Plugin_Continue; //"deleting" spray
+
 	if (!IsValidClient(client)) return Plugin_Handled;
 	if (!(checkUGCTypes&ugcSpray) || clientUGC[client]&ugcSpray) return Plugin_Continue;
-	
+
 	PrintToChat(client, "[SM] Your spray was blocked");
 	return Plugin_Handled;
 }
@@ -800,30 +718,12 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse, float vel[3
 }
 
 
-
-static int GetOwnerOfUserFile(const char[] file, eUserGeneratedContent& type) {
-	if (StrContains(file,"user_custom/")==0) {
-		for (int client=1;client<=MaxClients;client++) {
-			if (!IsClientConnected(client)) continue;
-			if (StrEqual(clientSprayFile[client], file)) {
-				type = ugcSpray;
-				return client;
-			} else if (StrEqual(clientJingleFile[client], file)) {
-				type = ugcJingle;
-				return client;
-			}
-		}
-		return -1; //unknown owner; this magically also hits for the default "no-jingle" file. idk why but ok i guess
-	}
-	return 0; //server owned
-}
-
 static bool IsValidClient(int client) {
 	return 1<=client<=MaxClients && IsClientInGame(client) && !IsFakeClient(client) && !IsClientSourceTV(client) && !IsClientReplay(client);
 }
 
 static int GetItemDefinitionIndex(int entity) {
-	if (HasEntProp(entity, Prop_Send, "m_iItemDefinitionIndex"))
+	if (entity > 0 && HasEntProp(entity, Prop_Send, "m_iItemDefinitionIndex"))
 		return GetEntProp(entity, Prop_Send, "m_iItemDefinitionIndex");
 	else
 		return -1;
@@ -832,8 +732,8 @@ static int GetItemDefinitionIndex(int entity) {
 static void KillSpray(int client) {
 	if (!IsValidClient(client))
 		return;
-	
-	float vec[3];
+
+	float vec[3]={123456.0,123456.0,123456.0};
 	TE_Start("Player Decal");
 	TE_WriteVector("m_vecOrigin", vec);
 	TE_WriteNum("m_nEntity", 0);
@@ -888,13 +788,13 @@ static void UGCFlagString(eUserGeneratedContent flags, char[] string, int maxlen
 //		value = TF2Attrib_GetValue(address);
 //		PrintToServer("  ent %i : %i / %f", indices[i], value, value);
 //	}
-//	
+//
 //	ArrayList statics = TF2Econ_GetItemStaticAttributes(GetItemDefinitionIndex(entity));
 //	for (int i; i<statics.Length; i++) {
 //		PrintToServer("  sta %i : %i / %f", statics.Get(i,0), statics.Get(i,1), statics.Get(i,1));
 //	}
 //	delete statics;
-//	
+//
 //	int attribs[16];
 //	float values[16];
 //	max = TF2Attrib_GetSOCAttribs(entity, attribs, values);
