@@ -13,9 +13,9 @@
 
 #if !defined _trustfactor_included
 #warning You are compiling without TrustFactors - Some functionallity will be missing!
-#define PLUGIN_VERSION "25w11a NTF"
+#define PLUGIN_VERSION "25w21a NTF"
 #else
-#define PLUGIN_VERSION "25w11a"
+#define PLUGIN_VERSION "25w21a"
 #endif
 
 #pragma newdecls required
